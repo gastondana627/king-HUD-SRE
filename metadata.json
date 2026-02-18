@@ -1,0 +1,5 @@
+{
+  "name": "KING-HUD: Cognitive SRE Console",
+  "description": "A heuristic utility and diagnostics dashboard for SREs, inspired by aerospace spatial disorientation research to detect and remediate infrastructure zombies.",
+  "requestFramePermissions": []
+}
