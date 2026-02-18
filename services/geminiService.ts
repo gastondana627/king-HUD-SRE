@@ -2,7 +2,34 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { TelemetryPoint, DiagnosticResult, SystemStatus, DixonStage, Intervention } from "../types";
 import { KING_HUD_SYSTEM_INSTRUCTION } from "../constants";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Safe Environment Variable Retrieval
+const getGeminiKey = () => {
+  try {
+    // @ts-ignore
+    const meta = import.meta;
+    // @ts-ignore
+    if (meta && meta.env) {
+      // @ts-ignore
+      return meta.env.VITE_GEMINI_API_KEY;
+    }
+  } catch (e) {
+    // ignore import.meta errors
+  }
+
+  try {
+    // @ts-ignore
+    if (typeof process !== 'undefined' && process.env) {
+      // @ts-ignore
+      return process.env.API_KEY;
+    }
+  } catch (e) {
+    // ignore process errors
+  }
+  return "";
+};
+
+const apiKey = getGeminiKey();
+const ai = new GoogleGenAI({ apiKey });
 
 export const analyzeSystemState = async (
   telemetry: TelemetryPoint,

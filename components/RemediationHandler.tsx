@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { triggerRemediationWebhook } from '../services/auditService';
-import { Terminal, ShieldCheck, Server } from 'lucide-react';
+import { Terminal, ShieldCheck } from 'lucide-react';
 
 export const RemediationHandler = () => {
     const [searchParams] = useSearchParams();
@@ -24,7 +24,7 @@ export const RemediationHandler = () => {
             }
         }
 
-        setTimeout(() => {
+        const timer = setTimeout(() => {
             setStatus("EXECUTING_REMEDIATION_PROTOCOL");
             
             // Execute the webhook logic which logs the audit entry
@@ -41,6 +41,8 @@ export const RemediationHandler = () => {
                 }, 2000);
             }, 1500);
         }, 1000);
+
+        return () => clearTimeout(timer);
     }, []);
 
     return (

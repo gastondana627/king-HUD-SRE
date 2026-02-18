@@ -13,30 +13,36 @@ const ACTIVE_DRILL_KEY = "KING_HUD_ACTIVE_DRILL";
 
 // Helper for Environment Variable compatibility (Vercel/Vite/Node)
 const getEnvVar = (key: string) => {
-    // @ts-ignore
-    const value = process.env[key];
-    if (value) return value;
     try {
         // @ts-ignore
-        if (typeof import.meta !== 'undefined' && import.meta.env) {
+        if (typeof process !== 'undefined' && process.env && process.env[key]) {
              // @ts-ignore
-            return import.meta.env[`VITE_${key}`];
+             return process.env[key];
         }
-    } catch (e) {
-        // Ignore import.meta errors
-    }
+    } catch (e) { /* ignore */ }
+
+    try {
+        // @ts-ignore
+        const meta = import.meta;
+        // @ts-ignore
+        if (meta && meta.env) {
+             // @ts-ignore
+            return meta.env[`VITE_${key}`];
+        }
+    } catch (e) { /* ignore */ }
+    
     return '';
 };
 
-// Use process.env.API_KEY for Gemini
-const getGeminiKey = () => process.env.API_KEY;
+// Use VITE_GEMINI_API_KEY for Gemini
+const getGeminiKey = () => getEnvVar('GEMINI_API_KEY') || getEnvVar('API_KEY');
 const getSendGridKey = () => getEnvVar('SENDGRID_API_KEY');
 
 // Auditor is only ONLINE if BOTH the Cognitive Layer (Gemini) and Uplink Layer (SendGrid) are provisioned.
 export const isAuditorOnline = () => !!getGeminiKey() && !!getSendGridKey();
 
 // Initialize Gemini Client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: getGeminiKey() });
 
 // SHIFT BOUNDARIES (CST/CDT)
 export const SHIFT_1_START_HOUR = 9;  // 09:00 AM
@@ -135,7 +141,7 @@ export const checkAndSendDailySummary = async () => {
 };
 
 const generateShiftHandoverReport = async (logs: string[]) => {
-    if (!process.env.API_KEY) {
+    if (!getGeminiKey()) {
         console.warn("[AUDIT_SERVICE]: Cannot generate Daily Report - No API Key");
         return null;
     }
@@ -275,7 +281,7 @@ export const invoke_ai_analysis = async (telemetryPayload: any) => {
   const timestamp = new Date().toISOString();
   const headerPrefix = `[SHIFT_IDENTIFIER: ${shift}] [TIMESTAMP: ${timestamp}]`;
 
-  if (!process.env.API_KEY) {
+  if (!getGeminiKey()) {
       console.warn("[AUDIT_SERVICE]: Missing Gemini API Key. Telemetry Audit Failed.");
       const errorMsg = "ERROR: FORENSIC_UPLINK_UNAVAILABLE // CHECK_API_PROVISIONING.";
       

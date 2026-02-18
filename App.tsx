@@ -6,7 +6,7 @@ import { RemediationHandler } from './components/RemediationHandler';
 
 export const App = () => {
   useEffect(() => {
-    console.log("KING-HUD_UI: RENDER_SUCCESSFUL");
+    console.log("KING-HUD_UI: RENDER_SUCCESSFUL [SYSTEM_REFRESH_COMPLETE]");
   }, []);
 
   return (

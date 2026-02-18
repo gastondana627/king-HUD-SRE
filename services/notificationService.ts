@@ -4,8 +4,26 @@ import { TelemetryPoint } from '../types';
 // Helper to handle client-side env vars securely-ish for the demo
 // In Vite/React, this looks for process.env or import.meta.env depending on build
 const getEnv = (key: string) => {
-    // @ts-ignore
-    return process.env[key] || '';
+    try {
+        // @ts-ignore
+        const meta = import.meta;
+        // @ts-ignore
+        if (meta && meta.env) {
+             // @ts-ignore
+             const val = meta.env[key] || meta.env[`VITE_${key}`];
+             if (val) return val;
+        }
+    } catch(e) { /* ignore */ }
+
+    try {
+        // @ts-ignore
+        if (typeof process !== 'undefined' && process.env) {
+            // @ts-ignore
+            return process.env[key] || '';
+        }
+    } catch(e) { /* ignore */ }
+
+    return '';
 };
 
 export const sendEmailAlert = async (subject: string, body: string, hypothesis?: string): Promise<{ success: boolean; status: string | number }> => {

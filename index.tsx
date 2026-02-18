@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 
 // Verification Log for Cloud Run / Local Port
+// [SYSTEM_REFRESH]: Verifying Entry Point Integrity
 console.log(`[SYSTEM]: PORTAL_UPLINK_LISTENING_ON_PORT_${window.location.port || '80'}`);
 
 const rootElement = document.getElementById('root');
