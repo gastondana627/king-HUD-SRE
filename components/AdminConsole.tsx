@@ -118,7 +118,7 @@ export const AdminConsole = () => {
             {/* Logs Footer */}
             <div className="h-48 border-t border-[#33ff00]/30 bg-black p-4 font-mono text-sm overflow-y-auto">
                 {logs.map((log, i) => (
-                    <div key={i} className="mb-1 text-[#33ff00] opacity-80 border-l-2 border-[#33ff00]/50 pl-2">> {log}</div>
+                    <div key={i} className="mb-1 text-[#33ff00] opacity-80 border-l-2 border-[#33ff00]/50 pl-2">&gt; {log}</div>
                 ))}
                 <div className="animate-pulse text-[#33ff00]">_</div>
             </div>

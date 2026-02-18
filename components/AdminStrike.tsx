@@ -56,9 +56,9 @@ export const AdminStrike = () => {
             <h2 className="text-xs tracking-[0.3em] text-red-800 uppercase mb-8">Sentinel Security :: Access Violation</h2>
 
             <div className="text-left space-y-4 font-mono text-sm text-gray-500 mb-8">
-                <p>> ROUTE: /admin/strike</p>
-                <p>> STATUS: <span className="text-red-800 font-bold bg-red-900/10 px-1">RESTRICTED</span></p>
-                <p>> TRACE: {Math.random().toString(36).substring(7).toUpperCase()}</p>
+                <p>&gt; ROUTE: /admin/strike</p>
+                <p>&gt; STATUS: <span className="text-red-800 font-bold bg-red-900/10 px-1">RESTRICTED</span></p>
+                <p>&gt; TRACE: {Math.random().toString(36).substring(7).toUpperCase()}</p>
             </div>
 
             <div className="relative group">

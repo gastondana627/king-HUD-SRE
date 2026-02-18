@@ -58,11 +58,11 @@ export const RemediationHandler = () => {
                 <div className="bg-black border border-emerald-900/50 p-4 text-left font-mono text-xs space-y-2 mb-8">
                     <div className="flex items-center gap-2">
                         <Terminal className="w-3 h-3" />
-                        <span>> PROTOCOL: OOB_REMEDIATION</span>
+                        <span>&gt; PROTOCOL: OOB_REMEDIATION</span>
                     </div>
-                    <div>> SOURCE: {searchParams.get('source') || 'BLUE_TEAM_LINK'}</div>
-                    <div>> TARGET: {searchParams.get('instance')}</div>
-                    <div className="text-emerald-300 animate-pulse">> STATUS: {status}...</div>
+                    <div>&gt; SOURCE: {searchParams.get('source') || 'BLUE_TEAM_LINK'}</div>
+                    <div>&gt; TARGET: {searchParams.get('instance')}</div>
+                    <div className="text-emerald-300 animate-pulse">&gt; STATUS: {status}...</div>
                 </div>
 
                 <div className="text-[10px] text-gray-500">
