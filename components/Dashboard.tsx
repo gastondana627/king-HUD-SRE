@@ -44,7 +44,7 @@ export const Dashboard = () => {
   const remediationStartTimeRef = useRef<number>(0);
   
   const lastAlertSuccessRef = useRef<boolean>(false);
-  const lastClaudeMatchRef = useRef<boolean>(false); // Store match result
+  const lastGeminiMatchRef = useRef<boolean>(false); // Store match result
 
   // Refs for logic that shouldn't trigger re-renders or dependency loops
   const logsRef = useRef<string[]>(MOCK_LOGS_NOMINAL);
@@ -282,11 +282,11 @@ export const Dashboard = () => {
       
       // Use the stored alert success status if we are in auto mode flow
       const alertSuccess = isManual ? lastAlertSuccessRef.current : true;
-      const claudeMatch = lastClaudeMatchRef.current;
+      const geminiMatch = lastGeminiMatchRef.current;
 
       // Log to CSV - Triggers 3rd Shift Auditor
-      // UPGRADE: Pass claudeMatch, Source, Shift Count, and Stall Status
-      logAuditEntry(point, alertSuccess, resetSuccess, source, claudeMatch, ttrSec, remediationStartTimeRef.current, newCount, stallDetectedDuringEvent);
+      // UPGRADE: Pass geminiMatch, Source, Shift Count, and Stall Status
+      logAuditEntry(point, alertSuccess, resetSuccess, source, geminiMatch, ttrSec, remediationStartTimeRef.current, newCount, stallDetectedDuringEvent);
       
       if (resetSuccess) {
           lastResetTimeRef.current = Date.now();
@@ -338,7 +338,7 @@ export const Dashboard = () => {
             manualMatch = (simulationMode === 'ZOMBIE' && diagnosticResult.status === SystemStatus.ZOMBIE_KERNEL) ||
                           (simulationMode === 'CPU_STRIKE' && diagnosticResult.status === SystemStatus.WARNING);
         }
-        lastClaudeMatchRef.current = manualMatch;
+        lastGeminiMatchRef.current = manualMatch;
 
         const broadcastResults = await broadcastCriticalAlert(point, "MANUAL_RESET_TRIGGERED", undefined, manualMatch);
         lastAlertSuccessRef.current = true; // Assume notification sent for record keeping
@@ -386,7 +386,7 @@ export const Dashboard = () => {
         console.warn("Forensic generation failed", e);
     }
 
-    // CALCULATE CLAUDE MATCH (GROUND TRUTH VERIFICATION)
+    // CALCULATE GEMINI MATCH (GROUND TRUTH VERIFICATION)
     // In this simulation, we know the Ground Truth (simulationMode).
     // In a real system, this would require post-mortem log parsing.
     let isMatch = false;
@@ -400,7 +400,7 @@ export const Dashboard = () => {
              isMatch = true;
          }
     }
-    lastClaudeMatchRef.current = isMatch;
+    lastGeminiMatchRef.current = isMatch;
 
     // 1. Broadcast Alert
     setCommandStatus(`[CMD]: BROADCASTING CRITICAL ALERT... FORENSIC HOLD ACTIVE`);

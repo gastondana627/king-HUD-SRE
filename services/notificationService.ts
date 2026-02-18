@@ -27,7 +27,7 @@ export const sendEmailAlert = async (subject: string, body: string, hypothesis?:
   if (hypothesis) {
       finalBody += `
         <div style="margin-top: 20px; padding: 15px; background: #0f172a; border-left: 4px solid #8b5cf6; color: #e2e8f0; font-family: monospace; font-size: 12px; line-height: 1.4;">
-            <strong style="color: #a78bfa; text-transform: uppercase;">[CLAUDE_FORENSIC_HYPOTHESIS]:</strong><br/>
+            <strong style="color: #a78bfa; text-transform: uppercase;">[GEMINI_FORENSIC_HYPOTHESIS]:</strong><br/>
             <div style="margin-top: 8px; white-space: pre-wrap;">${hypothesis.replace(/\n/g, '<br/>')}</div>
         </div>
       `;
@@ -135,7 +135,7 @@ export const sendNtfyAlert = async (message: string, priority: number = 5): Prom
   }
 };
 
-export const broadcastCriticalAlert = async (metrics: TelemetryPoint, status: string, hypothesis?: string, claudeMatch?: boolean) => {
+export const broadcastCriticalAlert = async (metrics: TelemetryPoint, status: string, hypothesis?: string, geminiMatch?: boolean) => {
   console.log("[BROADCAST_ENGINE]: Activating Dual-Uplink (Email + SMS)...");
   
   const { INSTANCE_ID, ZONE } = GCP_CONFIG;
@@ -150,7 +150,7 @@ export const broadcastCriticalAlert = async (metrics: TelemetryPoint, status: st
   // We use the local hash router to catch the link action in the demo
   const baseUrl = window.location.origin + window.location.pathname;
   const metricsEncoded = encodeURIComponent(JSON.stringify(metrics));
-  const remediationUrl = `${baseUrl}#/remediate?instance=${INSTANCE_ID}&token=${secureToken}&source=BLUE_TEAM_OOB_LINK&claudeMatch=${claudeMatch}&metrics=${metricsEncoded}`;
+  const remediationUrl = `${baseUrl}#/remediate?instance=${INSTANCE_ID}&token=${secureToken}&source=BLUE_TEAM_OOB_LINK&geminiMatch=${geminiMatch}&metrics=${metricsEncoded}`;
   
   console.log('[SYSTEM]: REMEDIATION_LINK_GENERATED_AND_ENCRYPTED');
 

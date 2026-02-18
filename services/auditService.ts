@@ -1,10 +1,11 @@
+import { GoogleGenAI } from "@google/genai";
 import { TelemetryPoint } from '../types';
 import { sendEmailAlert } from './notificationService';
 
 // GitLab Narrative: Implemented continuous security validation loop to simulate recurring adversary behavior and audit system resilience.
 
 // UPGRADE: Multi-Channel Schema + Forensic Stitching (Drill ID & Cognitive Score) + Intensity Metrics
-export const CSV_HEADER = "INCIDENT_START,REMEDIATION_TIME,SOURCE,ASSOCIATED_DRILL,CLAUDE_HYPOTHESIS_MATCH,COGNITIVE_LOAD_SCORE,CPU_MAX,RAM_MAX,TTR_SEC,SHIFT,SHIFT_STRIKE_COUNT,STALL_DETECTED";
+export const CSV_HEADER = "INCIDENT_START,REMEDIATION_TIME,SOURCE,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,COGNITIVE_LOAD_SCORE,CPU_MAX,RAM_MAX,TTR_SEC,SHIFT,SHIFT_STRIKE_COUNT,STALL_DETECTED";
 const STORAGE_KEY = "telemetry_audit.csv";
 const HISTORY_KEY = "KING_HUD_HISTORY"; 
 const LAST_REPORT_KEY = "king_hud_last_daily_report";
@@ -27,11 +28,15 @@ const getEnvVar = (key: string) => {
     return '';
 };
 
-const getAnthropicKey = () => getEnvVar('ANTHROPIC_API_KEY') || getEnvVar('Anthopic_API_KEY');
+// Use process.env.API_KEY for Gemini
+const getGeminiKey = () => process.env.API_KEY;
 const getSendGridKey = () => getEnvVar('SENDGRID_API_KEY');
 
-// Auditor is only ONLINE if BOTH the Cognitive Layer (Anthropic) and Uplink Layer (SendGrid) are provisioned.
-export const isAuditorOnline = () => !!getAnthropicKey() && !!getSendGridKey();
+// Auditor is only ONLINE if BOTH the Cognitive Layer (Gemini) and Uplink Layer (SendGrid) are provisioned.
+export const isAuditorOnline = () => !!getGeminiKey() && !!getSendGridKey();
+
+// Initialize Gemini Client
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // SHIFT BOUNDARIES (CST/CDT)
 export const SHIFT_1_START_HOUR = 9;  // 09:00 AM
@@ -130,13 +135,12 @@ export const checkAndSendDailySummary = async () => {
 };
 
 const generateShiftHandoverReport = async (logs: string[]) => {
-    const apiKey = getAnthropicKey();
-    if (!apiKey) {
+    if (!process.env.API_KEY) {
         console.warn("[AUDIT_SERVICE]: Cannot generate Daily Report - No API Key");
         return null;
     }
 
-    const systemPrompt = `
+    const systemInstruction = `
         IDENTITY: You are the Senior Forensic Lead (Model: COMMANDER-90s).
         CONTEXT: You are overseeing the KING-HUD SRE Console.
         TASK: Synthesize the last 24 hours of telemetry logs into a 'Shift Handover' report.
@@ -158,31 +162,22 @@ const generateShiftHandoverReport = async (logs: string[]) => {
         1. Summarize total incidents (Zombie Kernels vs Admin Strikes).
         2. Identify recurring vulnerabilities.
         3. Analyze Time-To-Recovery (TTR) trends between AUTO_SENTINEL and USER_OOB interventions.
-        4. Validate CLAUDE_HYPOTHESIS_MATCH accuracy.
+        4. Validate GEMINI_HYPOTHESIS_MATCH accuracy.
         5. CRITICAL: Flag any "DRILL_FAILED_HUMAN_OOB_TIMEOUT" events as 1st Shift coverage gaps (Human-in-the-Loop Failure).
         6. ANALYZE COGNITIVE_LOAD_SCORE: Report if the team is operating at Expert Level (Score ~1) or System Exhaustion (Score 10).
     `;
 
     try {
-        const proxyUrl = "https://corsproxy.io/?https://api.anthropic.com/v1/messages";
-        const response = await fetch(proxyUrl, {
-            method: "POST",
-            headers: {
-                "x-api-key": apiKey,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
-            },
-            body: JSON.stringify({
-                model: "claude-3-haiku-20240307",
-                max_tokens: 1000,
-                system: systemPrompt,
-                messages: [{ role: "user", content: userContent }]
-            })
+        // UPGRADE: Using Pro for complex summarization and reasoning
+        const response = await ai.models.generateContent({
+            model: "gemini-3-pro-preview",
+            contents: userContent,
+            config: {
+                systemInstruction: systemInstruction,
+            }
         });
 
-        if (!response.ok) throw new Error("Anthropic API Error");
-        const data = await response.json();
-        const content = data.content?.[0]?.text || "NO_SUMMARY_GENERATED";
+        const content = response.text || "NO_SUMMARY_GENERATED";
         
         // Wrap in a nice container for the email
         return `
@@ -212,7 +207,7 @@ export const logAuditEntry = async (
   alertSuccess: boolean, 
   remediationTriggered: boolean,
   interventionSource: string, // Maps to SOURCE
-  claudeMatch: boolean,       // Maps to CLAUDE_HYPOTHESIS_MATCH
+  geminiMatch: boolean,       // Maps to GEMINI_HYPOTHESIS_MATCH
   timeToRecovery: number = 0,
   incidentStart?: number,      // Optional start time (timestamp)
   // New: Operational Intensity & Hiccup Logic
@@ -258,8 +253,8 @@ export const logAuditEntry = async (
       }
   }
 
-  // CSV FORMAT: INCIDENT_START,REMEDIATION_TIME,SOURCE,ASSOCIATED_DRILL,CLAUDE_HYPOTHESIS_MATCH,COGNITIVE_LOAD_SCORE,CPU_MAX,RAM_MAX,TTR_SEC,SHIFT,SHIFT_STRIKE_COUNT,STALL_DETECTED
-  const line = `\n${incidentStartTime},${remediationTime},${interventionSource},${activeDrill},${claudeMatch},${cognitiveScore},${metrics.cpu.toFixed(2)},${metrics.ram.toFixed(2)},${timeToRecovery},${currentShift},${shiftStrikeCount},${stallDetected}`;
+  // CSV FORMAT: INCIDENT_START,REMEDIATION_TIME,SOURCE,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,COGNITIVE_LOAD_SCORE,CPU_MAX,RAM_MAX,TTR_SEC,SHIFT,SHIFT_STRIKE_COUNT,STALL_DETECTED
+  const line = `\n${incidentStartTime},${remediationTime},${interventionSource},${activeDrill},${geminiMatch},${cognitiveScore},${metrics.cpu.toFixed(2)},${metrics.ram.toFixed(2)},${timeToRecovery},${currentShift},${shiftStrikeCount},${stallDetected}`;
   
   const existing = localStorage.getItem(STORAGE_KEY) || CSV_HEADER;
   localStorage.setItem(STORAGE_KEY, existing + line);
@@ -272,18 +267,16 @@ export const logAuditEntry = async (
   }
 };
 
-// Claude Handshake
+// Gemini Handshake
 export const invoke_ai_analysis = async (telemetryPayload: any) => {
   console.log("[AUDIT_SERVICE]: Packaging Telemetry Window for 3rd Shift Handover...");
-  
-  const apiKey = getAnthropicKey();
   
   const shift = getCurrentShift();
   const timestamp = new Date().toISOString();
   const headerPrefix = `[SHIFT_IDENTIFIER: ${shift}] [TIMESTAMP: ${timestamp}]`;
 
-  if (!apiKey) {
-      console.warn("[AUDIT_SERVICE]: Missing Anthropic API Key. Telemetry Audit Failed.");
+  if (!process.env.API_KEY) {
+      console.warn("[AUDIT_SERVICE]: Missing Gemini API Key. Telemetry Audit Failed.");
       const errorMsg = "ERROR: FORENSIC_UPLINK_UNAVAILABLE // CHECK_API_PROVISIONING.";
       
       const fullContent = `${headerPrefix}\n${errorMsg}`;
@@ -305,7 +298,7 @@ export const invoke_ai_analysis = async (telemetryPayload: any) => {
       return { report: errorMsg, confidence: "0%" };
   }
 
-  const systemPrompt = `
+  const systemInstruction = `
     IDENTITY: You are the KING-HUD Forensic Lead (Model: SENTINEL-80s).
     TONE: Cold. Precise. Haunting. High-Technical. 1980s Mainframe style.
     RESTRICTIONS: Do not use conversational filler. No greetings. No apologies.
@@ -334,33 +327,19 @@ export const invoke_ai_analysis = async (telemetryPayload: any) => {
   `;
 
   try {
-      const proxyUrl = "https://corsproxy.io/?https://api.anthropic.com/v1/messages";
-      
-      const response = await fetch(proxyUrl, {
-          method: "POST",
-          headers: {
-              "x-api-key": apiKey,
-              "anthropic-version": "2023-06-01",
-              "content-type": "application/json"
-          },
-          body: JSON.stringify({
-              model: "claude-3-haiku-20240307",
-              max_tokens: 300,
-              system: systemPrompt,
-              messages: [
-                  { role: "user", content: userContent }
-              ]
-          })
+      // UPGRADE: Using Pro for forensic depth
+      const response = await ai.models.generateContent({
+          model: "gemini-3-pro-preview",
+          contents: userContent,
+          config: {
+              systemInstruction: systemInstruction,
+              maxOutputTokens: 300,
+          }
       });
 
-      if (!response.ok) {
-          throw new Error(`Anthropic API Error: ${response.status}`);
-      }
+      const reportText = response.text || "NO_ANALYSIS_GENERATED";
 
-      const data = await response.json();
-      const reportText = data.content?.[0]?.text || "NO_ANALYSIS_GENERATED";
-
-      console.log("[AUDIT_SERVICE]: Shift-Audit Generated via Claude.");
+      console.log("[AUDIT_SERVICE]: Shift-Audit Generated via Gemini Pro.");
       
       const confidenceMatch = reportText.match(/CONFIDENCE_SCORE:\s*(\d+)%/i);
       const confidenceScore = confidenceMatch ? `${confidenceMatch[1]}%` : "UNKNOWN";
@@ -419,7 +398,7 @@ export const triggerZombieStrike = () => {
 };
 
 // UPGRADE: Multi-Channel Webhook Handler
-export const triggerRemediationWebhook = (instanceId: string, token: string, source: string = "BLUE_TEAM_OOB_LINK", metrics?: any, claudeMatch?: boolean) => {
+export const triggerRemediationWebhook = (instanceId: string, token: string, source: string = "BLUE_TEAM_OOB_LINK", metrics?: any, geminiMatch?: boolean) => {
     console.log(`[WEBHOOK_LISTENER]: POST /api/remediate (Instance: ${instanceId}, Source: ${source})`);
     
     const mockMetrics: TelemetryPoint = metrics || { 
@@ -435,7 +414,7 @@ export const triggerRemediationWebhook = (instanceId: string, token: string, sou
 
     // NOTE: Webhooks from email links don't have access to Dashboard State (shift count/stalls).
     // Passing default values (0, false) for now.
-    logAuditEntry(mockMetrics, true, true, source, claudeMatch ?? false, ttr, undefined, 0, false);
+    logAuditEntry(mockMetrics, true, true, source, geminiMatch ?? false, ttr, undefined, 0, false);
     return { status: 200, message: "Remediation Executed via Webhook" };
 };
 

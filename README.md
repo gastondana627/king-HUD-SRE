@@ -55,7 +55,7 @@ KING-HUD is designed around a "3-Shift" continuous security validation model, en
 *   **Objective:** To validate that the Heuristic Detection engine can correctly identify and self-heal a fractured node without human input.
 
 ### 3rd Shift: Forensic Analysis (The AI Auditor)
-*   **Actor:** Anthropic Claude (Model: SENTINEL-80s).
+*   **Actor:** Google Gemini Pro (Model: SENTINEL-80s).
 *   **Function:** Post-incident analysis.
 *   **Trigger:** Activates immediately after a remediation event or scheduled wave.
 *   **Persona:** A "Cold, Precise, Mainframe-style" forensic lead.
@@ -74,8 +74,8 @@ To ensure the system is hardened against external threats, KING-HUD includes a h
 
 *   **Frontend:** React 19, Tailwind CSS
 *   **Visualization:** Recharts (Radar/Area configurations)
-*   **Cognitive Layer:** Google Gemini (Heuristic Diagnostics)
-*   **Forensic Layer:** Anthropic Claude (Post-Mortem Analysis)
+*   **Cognitive Layer:** Google Gemini Flash (Heuristic Diagnostics)
+*   **Forensic Layer:** Google Gemini Pro (Post-Mortem Analysis)
 *   **Uplink Gateways:** Twilio (SMS), SendGrid (Email), Ntfy (Push)
 *   **Routing:** React Router DOM (Client-Side C2 Routing)
 

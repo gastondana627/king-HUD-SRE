@@ -34,7 +34,7 @@ The `telemetry_audit.csv` dataset is structured to support multi-variate analysi
 | `SHIFT_STRIKE_COUNT` | Integer | Operational Intensity metric. High counts correlate with increased TTR (Fatigue). |
 | `STALL_DETECTED` | Boolean | **Leading Indicator.** True if the "Hiccup Monitor" detected RAM stagnation > 60s prior to fracture. |
 | `COGNITIVE_LOAD_SCORE` | Integer | Heuristic score (1-10) representing the strain on the operator. |
-| `CLAUDE_HYPOTHESIS_MATCH`| Boolean | Ground Truth verification of the AI's forensic analysis accuracy. |
+| `GEMINI_HYPOTHESIS_MATCH`| Boolean | Ground Truth verification of the AI's forensic analysis accuracy. |
 
 ---
 

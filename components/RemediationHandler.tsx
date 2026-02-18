@@ -12,7 +12,7 @@ export const RemediationHandler = () => {
         const instance = searchParams.get('instance') || 'UNKNOWN';
         const token = searchParams.get('token') || '';
         const source = searchParams.get('source') || 'BLUE_TEAM_OOB_LINK';
-        const claudeMatch = searchParams.get('claudeMatch') === 'true';
+        const geminiMatch = searchParams.get('geminiMatch') === 'true';
         const metricsRaw = searchParams.get('metrics');
 
         let metrics = undefined;
@@ -28,7 +28,7 @@ export const RemediationHandler = () => {
             setStatus("EXECUTING_REMEDIATION_PROTOCOL");
             
             // Execute the webhook logic which logs the audit entry
-            triggerRemediationWebhook(instance, token, source, metrics, claudeMatch);
+            triggerRemediationWebhook(instance, token, source, metrics, geminiMatch);
 
             setTimeout(() => {
                 setStatus("REBOOT_SUCCESSFUL_REDIRECTING");
