@@ -7,7 +7,8 @@ import { sendEmailAlert } from './notificationService';
 // UPGRADE: Kaggle-Ready Dataset Schema V2
 // High-Resolution Timestamps & Standardized Feature Engineering
 // Added LATENCY_HUMAN_ACTION for precise reaction time tracking separate from system reboot time.
-export const CSV_HEADER = "UTC_DATE,UTC_TIME_PRECISION,UNIX_EPOCH,INCIDENT_UUID,TRIGGER_TYPE,CPU_PEAK,RAM_PEAK,AI_THOUGHT_LATENCY_SEC,TOTAL_RECOVERY_TIME_SEC,SHIFT_ID,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,HEURISTIC_CONFIDENCE,COGNITIVE_LOAD_SCORE,STALL_DETECTED,QUEUE_DELAY_SEC,IS_ADVERSARY_MODE,LATENCY_HUMAN_ACTION_SEC";
+// REFACTOR: HEURISTIC_CONFIDENCE -> AI_FORENSIC_CONFIDENCE
+export const CSV_HEADER = "UTC_DATE,UTC_TIME_PRECISION,UNIX_EPOCH,INCIDENT_UUID,TRIGGER_TYPE,CPU_PEAK,RAM_PEAK,AI_THOUGHT_LATENCY_SEC,TOTAL_RECOVERY_TIME_SEC,SHIFT_ID,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,AI_FORENSIC_CONFIDENCE,COGNITIVE_LOAD_SCORE,STALL_DETECTED,QUEUE_DELAY_SEC,IS_ADVERSARY_MODE,LATENCY_HUMAN_ACTION_SEC";
 const STORAGE_KEY = "telemetry_audit.csv";
 const HISTORY_KEY = "KING_HUD_HISTORY"; 
 const LAST_REPORT_KEY = "king_hud_last_daily_report";
@@ -321,7 +322,9 @@ export const logAuditEntry = async (
   stallDetected: boolean = false,
   queueDelay: number = 0, // TRAFFIC CONTROL: Delay in seconds
   // DATA SCIENCE UPGRADE
-  humanLatency: number = 0
+  humanLatency: number = 0,
+  // FORENSIC CONFIDENCE SNAPSHOT
+  aiConfidence: number = 0
 ) => {
   const currentShift = getCurrentShift();
   
@@ -353,11 +356,6 @@ export const logAuditEntry = async (
   // Simulate Analysis Latency: 1.5s to 4.5s (Typical Gemini/Claude API response time)
   const analysisLatency = (Math.random() * (4.5 - 1.5) + 1.5).toFixed(2);
   
-  // Map Heuristic Confidence: High (0.85-0.99) if Match, Low (0.10-0.50) if Miss
-  const heuristicConfidence = geminiMatch 
-      ? (0.85 + Math.random() * 0.14).toFixed(2) 
-      : (0.10 + Math.random() * 0.40).toFixed(2);
-
   // 6. Clean TTR (Integer)
   const ttrClean = Math.floor(timeToRecovery);
   const latencyClean = Math.floor(humanLatency);
@@ -376,23 +374,21 @@ export const logAuditEntry = async (
   }
 
   // === UNIVERSAL TRIGGER: 3RD SHIFT AUDITOR ===
-  let aiConfidence = "N/A";
   if (alertSuccess || remediationTriggered) {
       console.log(`[AUDITOR]: Processing Event from ${interventionSource}. Waking Sentinel-80s...`);
       
       try {
-          const analysisResult = await invoke_ai_analysis({
-              trigger: `SOURCE_${interventionSource} // DRILL_${activeDrill}`, // Ensure Drill ID is in the trigger for the AI Report
+          // Invoke AI analysis but don't block log writing
+          invoke_ai_analysis({
+              trigger: `SOURCE_${interventionSource} // DRILL_${activeDrill}`, 
               timestamp: Date.now(),
               metrics: metrics,
               alert_status: alertSuccess ? "TRANSMISSION_CONFIRMED" : "TRANSMISSION_FAILED",
               remediation_source: interventionSource,
               ttr: timeToRecovery
-          });
-          aiConfidence = analysisResult.confidence;
+          }).catch(err => console.error(err));
       } catch (err) {
           console.error("[AUDITOR]: Forensic Analysis Failed", err);
-          aiConfidence = "ERROR";
       }
   }
 
@@ -401,8 +397,11 @@ export const logAuditEntry = async (
       activeIncidentPeakConfidence = 0;
   }
 
-  // CSV FORMAT: UTC_DATE,UTC_TIME_PRECISION,UNIX_EPOCH,INCIDENT_UUID,TRIGGER_TYPE,CPU_PEAK,RAM_PEAK,AI_THOUGHT_LATENCY_SEC,TOTAL_RECOVERY_TIME_SEC,SHIFT_ID,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,HEURISTIC_CONFIDENCE,COGNITIVE_LOAD_SCORE,STALL_DETECTED,QUEUE_DELAY_SEC,IS_ADVERSARY_MODE,LATENCY_HUMAN_ACTION_SEC
-  const line = `\n${utcDate},${utcTimePrecision},${unixEpoch},${forensicId},${triggerType},${metrics.cpu.toFixed(2)},${metrics.ram.toFixed(2)},${analysisLatency},${ttrClean},${shiftId},${activeDrill},${geminiMatch},${heuristicConfidence},${cognitiveScore},${stallDetected},${queueDelay},${isAdversaryMode},${latencyClean}`;
+  // Use the SNAPSHOT value passed from UI/Dashboard for the CSV
+  const recordedConfidence = aiConfidence > 0 ? aiConfidence : activeIncidentPeakConfidence;
+
+  // CSV FORMAT: UTC_DATE,UTC_TIME_PRECISION,UNIX_EPOCH,INCIDENT_UUID,TRIGGER_TYPE,CPU_PEAK,RAM_PEAK,AI_THOUGHT_LATENCY_SEC,TOTAL_RECOVERY_TIME_SEC,SHIFT_ID,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,AI_FORENSIC_CONFIDENCE,COGNITIVE_LOAD_SCORE,STALL_DETECTED,QUEUE_DELAY_SEC,IS_ADVERSARY_MODE,LATENCY_HUMAN_ACTION_SEC
+  const line = `\n${utcDate},${utcTimePrecision},${unixEpoch},${forensicId},${triggerType},${metrics.cpu.toFixed(2)},${metrics.ram.toFixed(2)},${analysisLatency},${ttrClean},${shiftId},${activeDrill},${geminiMatch},${recordedConfidence},${cognitiveScore},${stallDetected},${queueDelay},${isAdversaryMode},${latencyClean}`;
   
   const existing = localStorage.getItem(STORAGE_KEY) || CSV_HEADER;
   localStorage.setItem(STORAGE_KEY, existing + line);
@@ -640,6 +639,7 @@ export const triggerRemediationWebhook = (instance: string, token: string, sourc
         0, // shiftStrikeCount
         false, // stallDetected
         0, // queueDelay
-        10 // humanLatency
+        10, // humanLatency
+        0 // aiConfidence (unknown for webhook)
     );
 };

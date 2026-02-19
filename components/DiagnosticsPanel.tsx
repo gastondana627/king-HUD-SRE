@@ -5,27 +5,11 @@ import { AlertTriangle, Terminal, ShieldAlert, CheckCircle, Activity, Skull, Wif
 interface DiagnosticsPanelProps {
   result: DiagnosticResult | null;
   loading: boolean;
+  confidence?: number;
 }
 
-export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ result, loading }) => {
-  const [adversaryConfidence, setAdversaryConfidence] = useState(5);
-
-  useEffect(() => {
-      // VISUAL EFFECT: Climbing Confidence during Adversary Emulation
-      if (result?.status === SystemStatus.EMERGENCY_ADVERSARY_EMULATION_IN_PROGRESS) {
-          const interval = setInterval(() => {
-              setAdversaryConfidence(prev => {
-                  if (prev >= 98) return 98;
-                  // Random climb between 1-3% per tick for organic feel
-                  return prev + Math.floor(Math.random() * 3) + 1; 
-              });
-          }, 150);
-          return () => clearInterval(interval);
-      } else {
-          // Reset when not in adversary mode
-          setAdversaryConfidence(5);
-      }
-  }, [result?.status]);
+export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ result, loading, confidence = 5 }) => {
+  // Confidence is now managed by parent Dashboard to support Snapshot Actuation logic
 
   if (loading) {
     return (
@@ -112,11 +96,13 @@ export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ result, load
                   <span className="font-bold text-sky-400 font-display text-lg">{intervention.protocol}</span>
                   <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
                     isAdversary 
-                      ? 'bg-red-900/50 text-red-400 animate-pulse' // Special styling for Adversary Mode
+                      ? 'bg-red-900/50 text-red-400' // Special styling for Adversary Mode
                       : intervention.confidence === 'HIGH' ? 'bg-emerald-900/50 text-emerald-400' : 'bg-amber-900/50 text-amber-400'
                   }`}>
                     {isAdversary 
-                       ? `AI_FORENSIC_CONFIDENCE: ${adversaryConfidence}%` 
+                       ? <>
+                           AI_FORENSIC_CONFIDENCE: {confidence}<span className="animate-[pulse_0.1s_ease-in-out_infinite]">%</span>
+                         </> 
                        : `${intervention.confidence} CONFIDENCE`
                     }
                   </span>

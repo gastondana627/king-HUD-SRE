@@ -15,7 +15,9 @@ import {
   MOCK_LOGS_ZOMBIE, 
   MOCK_LOGS_STRIKE,
   GCP_CONFIG,
-  REBOOT_COOLDOWN_MS
+  REBOOT_COOLDOWN_MS,
+  INITIAL_HOLD_TIME,
+  FAILSAFE_GRACE_TIME
 } from '../constants';
 import { Play, Pause, AlertOctagon, RotateCcw, Zap, RefreshCw, ServerCrash, FileText, X, Cpu, Download, Database, Layers, ArrowLeft } from 'lucide-react';
 import { TrafficContext } from '../App';
@@ -39,6 +41,9 @@ export const Dashboard = () => {
   const [currentShift, setCurrentShift] = useState<string>(getCurrentShift());
   const [showFullArchive, setShowFullArchive] = useState(false);
   
+  // Forensic Confidence Actuation State
+  const [forensicConfidence, setForensicConfidence] = useState<number>(5);
+
   // Operational Intensity & Hiccup Logic State
   const [isStalled, setIsStalled] = useState<boolean>(false);
 
@@ -102,6 +107,30 @@ export const Dashboard = () => {
 
   const remediationTimerRef = useRef(remediationTimer);
   useEffect(() => { remediationTimerRef.current = remediationTimer; }, [remediationTimer]);
+
+  // Forensic Confidence Actuation Logic
+  useEffect(() => {
+    let interval: number;
+    
+    if (simulationMode === 'ZOMBIE') {
+        // STABILITY PROTOCOL: Lock at 95%
+        setForensicConfidence(95);
+    } else if (simulationMode === 'CPU_STRIKE') {
+        // CLIMB PROTOCOL: Start 15%, climb to 85%
+        setForensicConfidence(15);
+        interval = window.setInterval(() => {
+            setForensicConfidence(prev => {
+                if (prev >= 85) return 85;
+                return prev + 12; // Increment by 12%
+            });
+        }, 30000); // 30s interval
+    } else {
+        // NOMINAL
+        setForensicConfidence(5);
+    }
+
+    return () => clearInterval(interval);
+  }, [simulationMode]);
 
   // ESC Key Listener for Modal
   useEffect(() => {
@@ -237,7 +266,7 @@ export const Dashboard = () => {
               }
 
               setRemediationPhase('FAILSAFE');
-              setRemediationTimer(120); // 120s Grace Period (Total 300s)
+              setRemediationTimer(FAILSAFE_GRACE_TIME); // 120s Grace Period
               logsRef.current = [...logsRef.current, "[WARNING]: FORENSIC_WINDOW_CLOSED. OPERATOR_INACTIVITY_DETECTED. EXTENDING_GRACE_PERIOD_120S."];
               return;
           }
@@ -426,7 +455,8 @@ export const Dashboard = () => {
 
       // Log to CSV - Triggers 3rd Shift Auditor
       // UPGRADE: Pass geminiMatch, Source, Shift Count, Stall Status, Queue Delay, and Human Latency
-      logAuditEntry(point, alertSuccess, resetSuccess, source, geminiMatch, totalTtrSec, remediationStartTimeRef.current, newCount, stallDetectedDuringEvent, 0, latencySec);
+      // CAPTURE: Pass current forensicConfidence for accurate snapshot
+      logAuditEntry(point, alertSuccess, resetSuccess, source, geminiMatch, totalTtrSec, remediationStartTimeRef.current, newCount, stallDetectedDuringEvent, 0, latencySec, forensicConfidence);
       
       if (resetSuccess) {
           lastResetTimeRef.current = Date.now();
@@ -572,7 +602,7 @@ export const Dashboard = () => {
     logsRef.current = [...logsRef.current, `[PROTOCOL]: HUMAN_FIRST_MANDATE_ACTIVE (${currentShiftRef.current}). INITIATING_FORENSIC_HOLD.`];
     
     setRemediationPhase('HOLD');
-    setRemediationTimer(180); 
+    setRemediationTimer(INITIAL_HOLD_TIME); 
     setCommandStatus(`[CMD]: INITIATING FORENSIC HOLD (180s)...`);
   };
 
@@ -1220,7 +1250,7 @@ export const Dashboard = () => {
 
         {/* Right: AI Diagnostics */}
         <div className="col-span-12 lg:col-span-4 h-[500px] lg:h-auto">
-          <DiagnosticsPanel result={diagnosticResult} loading={isAnalyzing} />
+          <DiagnosticsPanel result={diagnosticResult} loading={isAnalyzing} confidence={forensicConfidence} />
         </div>
       </div>
     </HUDLayout>

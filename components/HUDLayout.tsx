@@ -82,9 +82,11 @@ export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediat
     return () => clearInterval(interval);
   }, []);
 
-  // Timer Formatting (MM:SS)
+  // Timer Formatting (MM:SS) - Explicitly restricted to Minutes and Seconds
   const formatTime = (sec: number | null) => {
     if (sec === null) return "00:00";
+    // If seconds exceed 60 minutes, it will show 61:00, 120:00 etc. 
+    // No hour logic is applied.
     const m = Math.floor(sec / 60).toString().padStart(2, '0');
     const s = (sec % 60).toString().padStart(2, '0');
     return `${m}:${s}`;

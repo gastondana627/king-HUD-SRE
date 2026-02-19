@@ -2,12 +2,14 @@ import React, { useState, useEffect, useContext } from 'react';
 import { ShieldAlert, Terminal, Skull, AlertTriangle, Fingerprint, ArrowLeft, Hourglass } from 'lucide-react';
 import { TrafficContext } from '../App';
 import { useNavigate } from 'react-router-dom';
+import { INITIAL_HOLD_TIME } from '../constants';
 
 export const AdminStrike = () => {
   const [authorized, setAuthorized] = useState(false);
   const [secret, setSecret] = useState('');
   const [logs, setLogs] = useState<string[]>([]);
   const [isStriking, setIsStriking] = useState(false);
+  const [timer, setTimer] = useState<number | null>(null);
   const navigate = useNavigate();
 
   // Consume Context
@@ -23,6 +25,33 @@ export const AdminStrike = () => {
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
   }, [navigate]);
+
+  // Sync Timer with Agent Busy State
+  useEffect(() => {
+      if (isAgentBusy && timer === null) {
+          // Sync with the Forensic Window (180s)
+          setTimer(INITIAL_HOLD_TIME);
+      } else if (!isAgentBusy) {
+          setTimer(null);
+      }
+  }, [isAgentBusy]);
+
+  // Countdown Interval
+  useEffect(() => {
+      if (timer === null) return;
+      const interval = setInterval(() => {
+          setTimer(t => (t !== null && t > 0 ? t - 1 : 0));
+      }, 1000);
+      return () => clearInterval(interval);
+  }, [timer]);
+
+  // Format MM:SS
+  const formatTime = (sec: number | null) => {
+      if (sec === null) return "00:00";
+      const m = Math.floor(sec / 60).toString().padStart(2, '0');
+      const s = (sec % 60).toString().padStart(2, '0');
+      return `${m}:${s}`;
+  };
 
   // Check secret against environment or default
   const checkAuth = () => {
@@ -182,19 +211,22 @@ export const AdminStrike = () => {
                         : 'bg-transparent border-red-600 hover:bg-red-950/30 hover:shadow-[0_0_50px_rgba(220,38,38,0.4)] hover:scale-105 active:scale-95 cursor-pointer'
                     }`}
                 >
-                    {isAgentBusy && !isStriking ? (
-                        <Hourglass className="w-16 h-16 mb-4 text-amber-500 animate-pulse" />
+                    {isAgentBusy ? (
+                        <>
+                            <Hourglass className="w-16 h-16 mb-2 text-amber-500 animate-pulse" />
+                            <span className="text-2xl font-mono font-bold text-amber-400">{formatTime(timer)}</span>
+                        </>
                     ) : (
                         <ShieldAlert className={`w-16 h-16 mb-4 transition-transform duration-200 ${isStriking ? 'animate-spin' : ''}`} />
                     )}
                     
-                    <span className="text-xl font-bold tracking-widest text-center px-4">
+                    <span className="text-xl font-bold tracking-widest text-center px-4 mt-2">
                         {isStriking 
                             ? (isAgentBusy ? 'QUEUEING...' : 'DEPLOYING...') 
-                            : (isAgentBusy ? 'QUEUE_STRIKE' : '[[INITIATE_REMOTE_ZOMBIE_STRIKE]]')}
+                            : (isAgentBusy ? 'STRIKE ACTIVE' : '[[INITIATE_REMOTE_ZOMBIE_STRIKE]]')}
                     </span>
                     <span className="text-xs mt-1 opacity-70">
-                        {isAgentBusy ? 'WAITING_FOR_NOMINAL' : 'ZOMBIE PAYLOAD'}
+                        {isAgentBusy ? 'PAYLOAD DEPLOYED' : 'ZOMBIE PAYLOAD'}
                     </span>
                 </button>
             </div>
