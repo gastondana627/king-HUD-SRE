@@ -5,11 +5,12 @@ interface HUDLayoutProps {
   children: ReactNode;
   status: string;
   remediationTimer: number | null;
+  remediationPhase?: 'HOLD' | 'FAILSAFE';
   shiftRemediationCount?: number;
   isStalled?: boolean;
 }
 
-export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediationTimer, shiftRemediationCount = 0, isStalled = false }) => {
+export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediationTimer, remediationPhase = 'HOLD', shiftRemediationCount = 0, isStalled = false }) => {
   const [nextWaveTimer, setNextWaveTimer] = useState("00:00:00");
 
   const isCritical = status === 'CRITICAL' || status === 'ZOMBIE_KERNEL';
@@ -81,8 +82,9 @@ export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediat
     return () => clearInterval(interval);
   }, []);
 
-  // Timer Formatting
-  const formatTime = (sec: number) => {
+  // Timer Formatting (MM:SS)
+  const formatTime = (sec: number | null) => {
+    if (sec === null) return "00:00";
     const m = Math.floor(sec / 60).toString().padStart(2, '0');
     const s = (sec % 60).toString().padStart(2, '0');
     return `${m}:${s}`;
@@ -103,15 +105,23 @@ export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediat
           <div className="flex items-center gap-4">
             {/* Main Status Dot (Left) - General System Health */}
             <div className={`w-3 h-3 rounded-full ${isFracture ? 'bg-[#FF4D6D] animate-ping' : isUplinkFail ? 'bg-[#FFA500]' : isCritical ? 'bg-red-500 animate-pulse' : 'bg-emerald-500'}`}></div>
-            <h1 className="font-display text-2xl font-bold tracking-widest text-white">KING-HUD <span className="text-xs text-hud-muted align-top ml-1">v2.4.2</span></h1>
+            <h1 className="font-display text-2xl font-bold tracking-widest text-white">KING-HUD <span className="text-xs text-hud-muted align-top ml-1">v2.4.3</span></h1>
           </div>
           
           {/* CENTER: FORENSIC HOLD TIMER OVERLAY */}
           {remediationTimer !== null && (
             <div className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 pointer-events-none hidden md:block">
-               <div className="bg-red-950/90 border border-red-500 text-red-100 px-6 py-1 rounded shadow-[0_0_20px_rgba(239,68,68,0.6)] animate-pulse font-bold tracking-widest text-sm whitespace-nowrap">
-                   [REMEDIATION_HOLD]: {formatTime(remediationTimer)} // ALLOWING_FORENSIC_WITNESS
-               </div>
+               {remediationPhase === 'HOLD' ? (
+                   <div className="bg-red-950/90 border border-red-500 text-red-100 px-6 py-1 rounded shadow-[0_0_20px_rgba(239,68,68,0.6)] animate-pulse font-bold tracking-widest text-sm whitespace-nowrap flex items-center gap-2">
+                       <span className="w-2 h-2 bg-red-500 rounded-full animate-ping"></span>
+                       [REMEDIATION_HOLD]: <span className="text-xl">{formatTime(remediationTimer)}</span> // UNDERTOW_PHASE
+                   </div>
+               ) : (
+                   <div className="bg-red-950/90 border border-red-500 text-red-100 px-6 py-1 rounded shadow-[0_0_20px_rgba(239,68,68,0.6)] animate-[pulse_0.2s_ease-in-out_infinite] font-bold tracking-widest text-sm whitespace-nowrap flex items-center gap-2">
+                       <span className="text-xl font-black text-red-500 mr-2">⚠️</span>
+                       [WARNING]: OPERATOR_INACTIVITY_DETECTED // SENTINEL_TAKEOVER_IN_T-{remediationTimer}s
+                   </div>
+               )}
             </div>
           )}
 

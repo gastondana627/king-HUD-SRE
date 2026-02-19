@@ -158,10 +158,9 @@ export const broadcastCriticalAlert = async (metrics: TelemetryPoint, status: st
   
   const { INSTANCE_ID, ZONE } = GCP_CONFIG;
   
-  // NARRATIVE: Change subject if Purple Team forensic hypothesis is present
-  const subject = hypothesis 
-    ? `[UNSCHEDULED_STRIKE_DETECTED]: PURPLE_TEAM_FORENSIC_REQUIRED` 
-    : `[CRITICAL]: KING-HUD_${INSTANCE_ID}_ALERT`;
+  // NARRATIVE: URGENT SUBJECT LINE as requested
+  // This ensures the operator knows exactly what is happening before opening the email.
+  const subject = `[IMMEDIATE_TACTICAL_ALERT]: C2_FRACTURE_DETECTED // INSTANCE: ${INSTANCE_ID}`;
   
   // BLUE TEAM LINK GENERATION
   const secureToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
@@ -173,24 +172,28 @@ export const broadcastCriticalAlert = async (metrics: TelemetryPoint, status: st
   console.log('[SYSTEM]: REMEDIATION_LINK_GENERATED_AND_ENCRYPTED');
 
   const emailBody = `
-    <div style="font-family: monospace; background: #0a0f14; color: #e2e8f0; padding: 20px; border: 1px solid #0ea5e9; border-radius: 6px;">
+    <div style="font-family: monospace; background: #0a0f14; color: #e2e8f0; padding: 20px; border: 1px solid #ef4444; border-radius: 6px;">
       <h2 style="color: #ef4444; border-bottom: 1px solid #334155; padding-bottom: 10px; margin-top: 0;">CRITICAL INFRASTRUCTURE EVENT</h2>
       <div style="margin-bottom: 20px;">
         <p style="margin: 5px 0;"><strong>INSTANCE:</strong> ${INSTANCE_ID}</p>
         <p style="margin: 5px 0;"><strong>ZONE:</strong> ${ZONE}</p>
-        <p style="margin: 5px 0;"><strong>STATUS:</strong> <span style="color: #ef4444;">${status}</span></p>
+        <p style="margin: 5px 0;"><strong>STATUS:</strong> <span style="color: #ef4444; font-weight: bold;">${status}</span></p>
       </div>
       
       <div style="background: #1e293b; padding: 15px; border-radius: 4px; border-left: 4px solid #f59e0b; margin-bottom: 30px;">
-        <p style="margin: 0 0 10px 0; color: #94a3b8; font-size: 12px; text-transform: uppercase;">Real-Time Telemetry</p>
-        <p style="margin: 5px 0; font-size: 16px;">CPU: <strong>${metrics.cpu.toFixed(1)}%</strong></p>
-        <p style="margin: 5px 0; font-size: 16px;">RAM: <strong>${metrics.ram.toFixed(1)}%</strong></p>
+        <p style="margin: 0 0 10px 0; color: #94a3b8; font-size: 12px; text-transform: uppercase;">Real-Time Telemetry Peak</p>
+        <p style="margin: 5px 0; font-size: 16px;">CPU: <strong style="color: #ef4444">${metrics.cpu.toFixed(1)}%</strong> (EXPECTED > 10%)</p>
+        <p style="margin: 5px 0; font-size: 16px;">RAM: <strong style="color: #ef4444">${metrics.ram.toFixed(1)}%</strong> (SATURATION)</p>
       </div>
       
       <div style="text-align: center; margin: 40px 0;">
         <a href="${remediationUrl}" style="background: #ff4444; color: white; padding: 16px 32px; text-decoration: none; border-radius: 4px; font-weight: bold; font-family: sans-serif; display: inline-block; box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);">EXECUTE EMERGENCY REBOOT</a>
       </div>
       
+      <div style="margin: 20px 0; border: 1px solid #334155; padding: 10px; background: #111827; font-size: 11px; color: #94a3b8;">
+         <strong>STRATEGY:</strong> Use the manual [[COMMIT]] button in the HUD to bypass the 180s Forensic Window if immediate action is required.
+      </div>
+
       <p style="color: #64748b; font-size: 12px; border-top: 1px solid #334155; padding-top: 15px; text-align: center;">
         Warning: This link bypasses standard IAM prompts. Use only in CRITICAL_SYSTEM_FRACTURE events.
       </p>
@@ -210,4 +213,37 @@ export const broadcastCriticalAlert = async (metrics: TelemetryPoint, status: st
   ]);
 
   return results;
+};
+
+// SENTINEL PROTOCOL FAIL-SAFE NOTIFICATION
+export const broadcastFailSafeAlert = async () => {
+  const { INSTANCE_ID } = GCP_CONFIG;
+  const subject = "[CRITICAL]: HUMAN_OPERATOR_UNRESPONSIVE // SENTINEL_TAKEOVER_ACTUATED";
+  
+  const body = `
+    <div style="font-family: monospace; background: #0a0f14; color: #e2e8f0; padding: 20px; border: 2px solid #ef4444; border-radius: 4px;">
+      <h2 style="color: #ef4444; border-bottom: 1px solid #334155; padding-bottom: 10px; margin-top: 0; letter-spacing: 1px;">SENTINEL_PROTOCOL_v2.4.3_ACTIVE</h2>
+      
+      <div style="margin: 20px 0; font-size: 14px; line-height: 1.5;">
+        <p style="margin-bottom: 10px;">Warning: 300-second Forensic Window expired without SRE intervention.</p>
+        <p style="margin-bottom: 10px;">KING-HUD has assumed control of Instance Reset protocols to prevent total C2 Fracture.</p>
+        <p style="color: #f59e0b;">TARGET: ${INSTANCE_ID}</p>
+      </div>
+
+      <div style="text-align: center; margin: 30px 0;">
+         <a href="https://www.kaggle.com/code/gastondana/king-hud-human-vs-agentic-remediation-study/edit" style="color: #00f3ff; font-weight: bold; text-decoration: none; border: 1px solid #00f3ff; padding: 12px 24px; display: inline-block; border-radius: 2px;">VIEW_LIVE_TELEMETRY_BENCHMARKS</a>
+      </div>
+
+      <div style="font-size: 10px; color: #64748b; border-top: 1px solid #334155; padding-top: 10px; text-transform: uppercase;">
+         [STATUS]: RECOVERY_IN_PROGRESS // DATA_COMMITTED_TO_KAGGLE_BENCHMARK.
+      </div>
+    </div>
+  `;
+
+  const shortMsg = `[SENTINEL]: FAIL-SAFE ACTUATED. HUMAN UNRESPONSIVE. RESETTING ${INSTANCE_ID}.`;
+
+  await Promise.allSettled([
+    sendNtfyAlert(shortMsg, 5),
+    sendEmailAlert(subject, body)
+  ]);
 };

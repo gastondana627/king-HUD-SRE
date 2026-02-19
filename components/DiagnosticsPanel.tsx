@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { DiagnosticResult, DixonStage, SystemStatus } from '../types';
 import { AlertTriangle, Terminal, ShieldAlert, CheckCircle, Activity, Skull, WifiOff } from 'lucide-react';
 
@@ -8,6 +8,25 @@ interface DiagnosticsPanelProps {
 }
 
 export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ result, loading }) => {
+  const [adversaryConfidence, setAdversaryConfidence] = useState(5);
+
+  useEffect(() => {
+      // VISUAL EFFECT: Climbing Confidence during Adversary Emulation
+      if (result?.status === SystemStatus.EMERGENCY_ADVERSARY_EMULATION_IN_PROGRESS) {
+          const interval = setInterval(() => {
+              setAdversaryConfidence(prev => {
+                  if (prev >= 98) return 98;
+                  // Random climb between 1-3% per tick for organic feel
+                  return prev + Math.floor(Math.random() * 3) + 1; 
+              });
+          }, 150);
+          return () => clearInterval(interval);
+      } else {
+          // Reset when not in adversary mode
+          setAdversaryConfidence(5);
+      }
+  }, [result?.status]);
+
   if (loading) {
     return (
       <div className="hud-border h-full flex flex-col items-center justify-center p-8 text-hud-primary animate-pulse">
@@ -30,7 +49,8 @@ export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ result, load
 
   const isFracture = result.status === SystemStatus.C2_FRACTURE_DETECTED;
   const isUplinkFail = result.status === SystemStatus.UPLINK_FAILURE;
-  const isCritical = result.status === SystemStatus.ZOMBIE_KERNEL || result.status === SystemStatus.CRITICAL || isFracture || isUplinkFail;
+  const isAdversary = result.status === SystemStatus.EMERGENCY_ADVERSARY_EMULATION_IN_PROGRESS;
+  const isCritical = result.status === SystemStatus.ZOMBIE_KERNEL || result.status === SystemStatus.CRITICAL || isFracture || isUplinkFail || isAdversary;
   
   let statusColor = 'text-emerald-500';
   let Icon = Activity;
@@ -41,6 +61,9 @@ export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ result, load
   } else if (isUplinkFail) {
     statusColor = 'text-[#FFA500]';
     Icon = WifiOff;
+  } else if (isAdversary) {
+    statusColor = 'text-red-500';
+    Icon = ShieldAlert;
   } else if (isCritical) {
     statusColor = 'text-red-500';
     Icon = ShieldAlert;
@@ -54,7 +77,7 @@ export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ result, load
       {/* Header */}
       <div className="p-4 border-b border-gray-800 bg-gray-900/50 flex justify-between items-center">
         <div className="flex items-center gap-2">
-          <Icon className={`w-5 h-5 ${statusColor} ${isFracture || isUplinkFail ? 'animate-pulse' : ''}`} />
+          <Icon className={`w-5 h-5 ${statusColor} ${isFracture || isUplinkFail || isAdversary ? 'animate-pulse' : ''}`} />
           <span className={`font-bold font-display uppercase tracking-wider ${statusColor}`}>
             {result.status} DETECTED
           </span>
@@ -88,9 +111,14 @@ export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ result, load
                 <div className="flex justify-between items-start mb-2">
                   <span className="font-bold text-sky-400 font-display text-lg">{intervention.protocol}</span>
                   <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
-                    intervention.confidence === 'HIGH' ? 'bg-emerald-900/50 text-emerald-400' : 'bg-amber-900/50 text-amber-400'
+                    isAdversary 
+                      ? 'bg-red-900/50 text-red-400 animate-pulse' // Special styling for Adversary Mode
+                      : intervention.confidence === 'HIGH' ? 'bg-emerald-900/50 text-emerald-400' : 'bg-amber-900/50 text-amber-400'
                   }`}>
-                    {intervention.confidence} CONFIDENCE
+                    {isAdversary 
+                       ? `AI_FORENSIC_CONFIDENCE: ${adversaryConfidence}%` 
+                       : `${intervention.confidence} CONFIDENCE`
+                    }
                   </span>
                 </div>
                 

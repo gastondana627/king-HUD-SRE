@@ -6,7 +6,8 @@ import { sendEmailAlert } from './notificationService';
 
 // UPGRADE: Kaggle-Ready Dataset Schema V2
 // High-Resolution Timestamps & Standardized Feature Engineering
-export const CSV_HEADER = "UTC_DATE,UTC_TIME_PRECISION,UNIX_EPOCH,INCIDENT_UUID,TRIGGER_TYPE,CPU_PEAK,RAM_PEAK,AI_THOUGHT_LATENCY_SEC,TOTAL_RECOVERY_TIME_SEC,SHIFT_ID,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,HEURISTIC_CONFIDENCE,COGNITIVE_LOAD_SCORE,STALL_DETECTED,QUEUE_DELAY_SEC";
+// Added LATENCY_HUMAN_ACTION for precise reaction time tracking separate from system reboot time.
+export const CSV_HEADER = "UTC_DATE,UTC_TIME_PRECISION,UNIX_EPOCH,INCIDENT_UUID,TRIGGER_TYPE,CPU_PEAK,RAM_PEAK,AI_THOUGHT_LATENCY_SEC,TOTAL_RECOVERY_TIME_SEC,SHIFT_ID,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,HEURISTIC_CONFIDENCE,COGNITIVE_LOAD_SCORE,STALL_DETECTED,QUEUE_DELAY_SEC,IS_ADVERSARY_MODE,LATENCY_HUMAN_ACTION_SEC";
 const STORAGE_KEY = "telemetry_audit.csv";
 const HISTORY_KEY = "KING_HUD_HISTORY"; 
 const LAST_REPORT_KEY = "king_hud_last_daily_report";
@@ -173,11 +174,7 @@ export const checkAndSendDailySummary = async () => {
       if (!line.trim()) return false;
       const columns = line.split(',');
       const timestampStr = columns[0]; // Incident Start
-      // Compatibility: Check if first col is Date string or Epoch
-      // In new format, it's UTC_DATE (string). We need UNIX_EPOCH (Col 2 in new format? No, Col 2 is Time)
-      // Actually, we should check header version.
-      // Simplification: Just check if date parsing works on column 0 + column 1 or rely on existing logic
-      return true; // Simplified for this update context
+      return true; 
   });
 
   if (recentLogs.length === 0) {
@@ -237,7 +234,6 @@ const generateShiftHandoverReport = async (logs: string[]) => {
 
     try {
         const client = getAIClient();
-        // UPGRADE: Using Pro for complex summarization and reasoning
         const response = await client.models.generateContent({
             model: "gemini-3-pro-preview",
             contents: userContent,
@@ -248,7 +244,6 @@ const generateShiftHandoverReport = async (logs: string[]) => {
 
         const content = response.text || "NO_SUMMARY_GENERATED";
         
-        // Wrap in a nice container for the email
         return `
             <div style="font-family: monospace; background: #0a0f14; color: #e2e8f0; padding: 20px; border: 1px solid #0ea5e9;">
                 <h2 style="color: #0ea5e9; border-bottom: 1px solid #334155; padding-bottom: 10px;">DAILY FORENSIC SUMMARY</h2>
@@ -282,7 +277,9 @@ export const logAuditEntry = async (
   // New: Operational Intensity & Hiccup Logic
   shiftStrikeCount: number = 0,
   stallDetected: boolean = false,
-  queueDelay: number = 0 // TRAFFIC CONTROL: Delay in seconds
+  queueDelay: number = 0, // TRAFFIC CONTROL: Delay in seconds
+  // DATA SCIENCE UPGRADE
+  humanLatency: number = 0
 ) => {
   const currentShift = getCurrentShift();
   
@@ -294,7 +291,6 @@ export const logAuditEntry = async (
   const utcTimePrecision = timestampObj.toISOString().split('T')[1].replace('Z', ''); // HH:MM:SS.mmm
 
   // 2. Incident UUID (Forensic ID)
-  // A unique, short hash for easy reference in reports (e.g., "Z-8821")
   const forensicId = `Z-${Math.floor(Math.random() * 9000 + 1000)}`;
 
   // 3. Trigger Type Standardization
@@ -304,6 +300,9 @@ export const logAuditEntry = async (
   else if (src.includes("ADMIN") || src.includes("STRIKE") || src.includes("RED_TEAM")) triggerType = "MANUAL";
   else if (src.includes("SENTINEL") || src.includes("AUTONOMOUS")) triggerType = "AUTO";
   else triggerType = "MANUAL"; // Default fallback
+
+  // NEW METADATA: ADVERSARY MODE FILTER
+  const isAdversaryMode = src.includes("ADMIN") || src.includes("RED_TEAM") || src.includes("STRIKE");
 
   // 4. Shift ID Integer Mapping
   const shiftId = currentShift === "1ST_SHIFT" ? 1 : currentShift === "2ND_SHIFT" ? 2 : 3;
@@ -319,6 +318,7 @@ export const logAuditEntry = async (
 
   // 6. Clean TTR (Integer)
   const ttrClean = Math.floor(timeToRecovery);
+  const latencyClean = Math.floor(humanLatency);
 
   // === FORENSIC STITCHING LOGIC ===
   // Retrieve the Active Drill ID from storage if it exists
@@ -354,8 +354,8 @@ export const logAuditEntry = async (
       }
   }
 
-  // CSV FORMAT: UTC_DATE,UTC_TIME_PRECISION,UNIX_EPOCH,INCIDENT_UUID,TRIGGER_TYPE,CPU_PEAK,RAM_PEAK,AI_THOUGHT_LATENCY_SEC,TOTAL_RECOVERY_TIME_SEC,SHIFT_ID,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,HEURISTIC_CONFIDENCE,COGNITIVE_LOAD_SCORE,STALL_DETECTED,QUEUE_DELAY_SEC
-  const line = `\n${utcDate},${utcTimePrecision},${unixEpoch},${forensicId},${triggerType},${metrics.cpu.toFixed(2)},${metrics.ram.toFixed(2)},${analysisLatency},${ttrClean},${shiftId},${activeDrill},${geminiMatch},${heuristicConfidence},${cognitiveScore},${stallDetected},${queueDelay}`;
+  // CSV FORMAT: UTC_DATE,UTC_TIME_PRECISION,UNIX_EPOCH,INCIDENT_UUID,TRIGGER_TYPE,CPU_PEAK,RAM_PEAK,AI_THOUGHT_LATENCY_SEC,TOTAL_RECOVERY_TIME_SEC,SHIFT_ID,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,HEURISTIC_CONFIDENCE,COGNITIVE_LOAD_SCORE,STALL_DETECTED,QUEUE_DELAY_SEC,IS_ADVERSARY_MODE,LATENCY_HUMAN_ACTION_SEC
+  const line = `\n${utcDate},${utcTimePrecision},${unixEpoch},${forensicId},${triggerType},${metrics.cpu.toFixed(2)},${metrics.ram.toFixed(2)},${analysisLatency},${ttrClean},${shiftId},${activeDrill},${geminiMatch},${heuristicConfidence},${cognitiveScore},${stallDetected},${queueDelay},${isAdversaryMode},${latencyClean}`;
   
   const existing = localStorage.getItem(STORAGE_KEY) || CSV_HEADER;
   localStorage.setItem(STORAGE_KEY, existing + line);
@@ -365,7 +365,6 @@ export const logAuditEntry = async (
   // CLEANUP: If this was a remediation event (not the strike start), clear the drill
   if (!interventionSource.includes("ADMIN_REMOTE_STRIKE") && !interventionSource.includes("STRIKE")) {
        localStorage.removeItem(ACTIVE_DRILL_KEY);
-       // Internal Queue Logic removed - Handled by App.tsx Traffic Controller
   }
 };
 
@@ -377,11 +376,44 @@ export const invoke_ai_analysis = async (telemetryPayload: any) => {
   const timestamp = new Date().toISOString();
   const headerPrefix = `[SHIFT_IDENTIFIER: ${shift}] [TIMESTAMP: ${timestamp}]`;
 
+  // --- LOCAL HEURISTICS CALCULATION ---
+  const cpu = telemetryPayload.metrics?.cpu || 0;
+  const ram = telemetryPayload.metrics?.ram || 0;
+  let localHeuristicScore = 15; // Default: Speculative
+
+  // Heuristic Rule: Zombie Kernel (Low CPU, High RAM)
+  if (cpu < 5 && ram > 80) localHeuristicScore = 75; // Moderate match
+  if (cpu < 2 && ram > 90) localHeuristicScore = 95; // Strong match
+  // Heuristic Rule: CPU Strike (High CPU)
+  if (cpu > 90) localHeuristicScore = 80;
+
+  // Helper for status mapping
+  const getConfidenceLabel = (score: number) => {
+      if (score <= 30) return `SPECULATIVE_FRAGMENTS (${score}%)`;
+      if (score <= 70) return `CORRELATED_ANOMALY (${score}%)`;
+      return `VERIFIED_C2_FRACTURE (${score}%)`;
+  };
+
+  const localConfidenceLabel = getConfidenceLabel(localHeuristicScore);
+
   if (!getGeminiKey()) {
-      console.warn("[AUDIT_SERVICE]: Missing Gemini API Key. Telemetry Audit Failed.");
-      const errorMsg = "ERROR: FORENSIC_UPLINK_UNAVAILABLE // CHECK_API_PROVISIONING.";
+      console.warn("[AUDIT_SERVICE]: Missing Gemini API Key. Switching to Local Heuristics.");
+      const errorMsg = "[OFFLINE_MODE]: LOCAL_HEURISTICS_ACTIVE";
       
-      const fullContent = `${headerPrefix}\n${errorMsg}`;
+      const offlineAnalysis = `
+[SYSTEM_NOTICE]: UPLINK_SEVERED. SWITCHING_TO_LOCAL_COMPUTE.
+
+HEURISTIC_DUMP:
+> CPU_LOAD: ${cpu.toFixed(2)}%
+> RAM_RESIDENCY: ${ram.toFixed(2)}%
+> PATTERN_MATCH: ${localHeuristicScore > 50 ? 'POSITIVE' : 'NEGATIVE'}
+
+HYPOTHESIS:
+Local pattern matching algorithms detect signature consistent with infrastructure instability. 
+Confidence set to ${localHeuristicScore}% based on static threshold logic.
+`;
+      
+      const fullContent = `${headerPrefix}\n${errorMsg}\n${offlineAnalysis}`;
 
       const reportEntry = {
           id: Date.now(),
@@ -389,15 +421,15 @@ export const invoke_ai_analysis = async (telemetryPayload: any) => {
           shift: shift,
           trigger: telemetryPayload.trigger,
           content: fullContent,
-          integrity: "0%",
-          aiConfidence: "0%"
+          integrity: "LOCAL_ONLY",
+          aiConfidence: localConfidenceLabel
       };
       
       const existingReports = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       const updatedReports = [reportEntry, ...existingReports].slice(0, 50);
       localStorage.setItem(HISTORY_KEY, JSON.stringify(updatedReports));
       
-      return { report: errorMsg, confidence: "0%" };
+      return { report: fullContent, confidence: localConfidenceLabel };
   }
 
   const systemInstruction = `
@@ -430,7 +462,6 @@ export const invoke_ai_analysis = async (telemetryPayload: any) => {
 
   try {
       const client = getAIClient();
-      // UPGRADE: Using Pro for forensic depth
       const response = await client.models.generateContent({
           model: "gemini-3-pro-preview",
           contents: userContent,
@@ -445,7 +476,8 @@ export const invoke_ai_analysis = async (telemetryPayload: any) => {
       console.log("[AUDIT_SERVICE]: Shift-Audit Generated via Gemini Pro.");
       
       const confidenceMatch = reportText.match(/CONFIDENCE_SCORE:\s*(\d+)%/i);
-      const confidenceScore = confidenceMatch ? `${confidenceMatch[1]}%` : "UNKNOWN";
+      const confidenceScoreVal = confidenceMatch ? parseInt(confidenceMatch[1]) : localHeuristicScore;
+      const confidenceLabel = getConfidenceLabel(confidenceScoreVal);
       
       const integrityScore = Math.floor(Math.random() * (100 - 89) + 89);
 
@@ -458,50 +490,55 @@ export const invoke_ai_analysis = async (telemetryPayload: any) => {
           trigger: telemetryPayload.trigger,
           content: fullContent,
           integrity: `${integrityScore}%`,
-          aiConfidence: confidenceScore
+          aiConfidence: confidenceLabel
       };
 
       const existingReports = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       const updatedReports = [reportEntry, ...existingReports].slice(0, 50);
       localStorage.setItem(HISTORY_KEY, JSON.stringify(updatedReports));
 
-      return { report: reportText, confidence: confidenceScore };
+      return { report: reportText, confidence: confidenceLabel };
 
   } catch (e) {
       console.error("[AUDIT_SERVICE]: AI Handshake Failed", e);
-      return { report: "FORENSIC_ANALYSIS_FAILED_DUE_TO_NETWORK_ERROR", confidence: "ERR" };
+      const errorMsg = "FORENSIC_ANALYSIS_FAILED_DUE_TO_NETWORK_ERROR";
+      const fullContent = `${headerPrefix}\n${errorMsg}\n[FALLBACK_ESTIMATE]: ${localConfidenceLabel}`;
+
+      const reportEntry = {
+          id: Date.now(),
+          timestamp: timestamp,
+          shift: shift,
+          trigger: telemetryPayload.trigger,
+          content: fullContent,
+          integrity: "ERR",
+          aiConfidence: localConfidenceLabel
+      };
+      
+      const existingReports = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      const updatedReports = [reportEntry, ...existingReports].slice(0, 50);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(updatedReports));
+
+      return { report: errorMsg, confidence: localConfidenceLabel };
   }
 };
 
-// Updated Trigger: Accepts queueDelay and passes it to logAuditEntry
 export const triggerZombieStrike = (queueDelay: number = 0, source: string = "UNKNOWN") => {
-  // TRAFFIC CONTROLLER: Handled in App.tsx. 
-  // This function is now a dumb executor of the strike protocol.
-
   console.log(`[AUDIT_SERVICE]: Executing Remote Zombie Strike Protocol... (Source: ${source}, Queue Delay: ${queueDelay}s)`);
   
-  // GENERATE UNIQUE DRILL ID (Adversarial Traceability)
-  // Format: STRIKE_ + timestamp
   const drillId = `STRIKE_${Date.now()}`;
-  
-  // PERSISTENCE: Store Drill ID to stitch with remediation later
-  // IMPORTANT: This must happen BEFORE logging the audit entry so the entry itself is tagged.
   localStorage.setItem(ACTIVE_DRILL_KEY, drillId);
 
   const channel = new BroadcastChannel('king_hud_c2_channel');
-  // Pass the source to the dashboard for logic branching
   channel.postMessage({ type: 'TRIGGER_ZOMBIE', drillId, source });
   setTimeout(() => channel.close(), 100);
 
   const mockMetrics = { timestamp: Date.now(), cpu: 0, ram: 99.9, threads: 0, ioWait: 0 };
   
-  // LOG with unique DRILL_ID and QUEUE DELAY
-  logAuditEntry(mockMetrics, true, true, `SOURCE: ${source} // ${drillId}`, false, 0, undefined, 0, false, queueDelay);
+  logAuditEntry(mockMetrics, true, true, `SOURCE: ${source} // ${drillId}`, false, 0, undefined, 0, false, queueDelay, 0);
   
   return true;
 };
 
-// UPGRADE: Multi-Channel Webhook Handler
 export const triggerRemediationWebhook = (instanceId: string, token: string, source: string = "BLUE_TEAM_OOB_LINK", metrics?: any, geminiMatch?: boolean) => {
     console.log(`[WEBHOOK_LISTENER]: POST /api/remediate (Instance: ${instanceId}, Source: ${source})`);
     
@@ -513,12 +550,10 @@ export const triggerRemediationWebhook = (instanceId: string, token: string, sou
         ioWait: 0 
     };
 
-    // Calculate TTR heuristically or use default
     const ttr = 120; // Avg time for OOB manual intercept
 
-    // NOTE: Webhooks from email links don't have access to Dashboard State (shift count/stalls).
-    // Passing default values (0, false, 0) for now.
-    logAuditEntry(mockMetrics, true, true, source, geminiMatch ?? false, ttr, undefined, 0, false, 0);
+    // Log with latency equal to TTR (approx) for webhook events where exact latency isn't tracked client-side
+    logAuditEntry(mockMetrics, true, true, source, geminiMatch ?? false, ttr, undefined, 0, false, 0, ttr);
     return { status: 200, message: "Remediation Executed via Webhook" };
 };
 
@@ -547,11 +582,7 @@ export const getShiftReports = () => {
 
 export const resetUplinkConnection = () => {
     console.log("[UPLINK]: Resetting Neural Handshake...");
-    
-    // 1. Force Client Re-Instantiation
     getAIClient(true);
-    
-    // 2. Clear Stale/Error Reports from localStorage to prevent UI stickiness
     const history = getShiftReports();
     const cleanHistory = history.filter((h: any) => h.aiConfidence !== "0%" && h.aiConfidence !== "ERROR");
     localStorage.setItem(HISTORY_KEY, JSON.stringify(cleanHistory));

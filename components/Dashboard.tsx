@@ -5,7 +5,7 @@ import { DiagnosticsPanel } from './DiagnosticsPanel';
 import { AdversaryRadar } from './AdversaryRadar';
 import { TelemetryPoint, DiagnosticResult, SystemStatus } from '../types';
 import { analyzeSystemState } from '../services/geminiService';
-import { sendNtfyAlert, broadcastCriticalAlert } from '../services/notificationService';
+import { sendNtfyAlert, broadcastCriticalAlert, sendEmailAlert, broadcastFailSafeAlert } from '../services/notificationService';
 import { executeInstanceReset } from '../services/cloudService';
 import { startAuditScheduler, logAuditEntry, invoke_ai_analysis, getShiftReports, isAuditorOnline, checkAndSendDailySummary, getCurrentShift, downloadAuditLog, resetUplinkConnection } from '../services/auditService';
 import { 
@@ -17,7 +17,7 @@ import {
   GCP_CONFIG,
   REBOOT_COOLDOWN_MS
 } from '../constants';
-import { Play, Pause, AlertOctagon, RotateCcw, Zap, RefreshCw, ServerCrash, FileText, X, Cpu, Download, Database, Layers } from 'lucide-react';
+import { Play, Pause, AlertOctagon, RotateCcw, Zap, RefreshCw, ServerCrash, FileText, X, Cpu, Download, Database, Layers, ArrowLeft } from 'lucide-react';
 import { TrafficContext } from '../App';
 
 export const Dashboard = () => {
@@ -45,6 +45,7 @@ export const Dashboard = () => {
 
   // Forensic Delay State
   const [remediationTimer, setRemediationTimer] = useState<number | null>(null);
+  const [remediationPhase, setRemediationPhase] = useState<'HOLD' | 'FAILSAFE'>('HOLD');
   // TTR STOPWATCH: Measures time from DETECTION (Fracture Confirmed) to COMMIT (Reset)
   const remediationStartTimeRef = useRef<number>(0);
   
@@ -102,6 +103,17 @@ export const Dashboard = () => {
 
   const remediationTimerRef = useRef(remediationTimer);
   useEffect(() => { remediationTimerRef.current = remediationTimer; }, [remediationTimer]);
+
+  // ESC Key Listener for Modal
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && showShiftReports) {
+        setShowShiftReports(false);
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [showShiftReports]);
 
   // Determine Shift-Specific Visuals
   const shiftColors = useMemo(() => {
@@ -211,30 +223,44 @@ export const Dashboard = () => {
         return r.shift === currentShift || (r.content && r.content.includes(shiftIdentifier));
     });
 
-  // Forensic Timer Effect
+  // Forensic Timer & Fail-Safe Logic
   useEffect(() => {
       if (remediationTimer === null) return;
       
       if (remediationTimer === 0) {
-          // Timer Expired: Auto-Heal (Sentinel)
+          // PHASE 1: FORENSIC HOLD EXPIRED -> ENTER FAILSAFE
+          if (remediationPhase === 'HOLD') {
+              setRemediationPhase('FAILSAFE');
+              setRemediationTimer(120); // 120s Grace Period (Total 300s)
+              logsRef.current = [...logsRef.current, "[WARNING]: FORENSIC_WINDOW_CLOSED. OPERATOR_INACTIVITY_DETECTED. EXTENDING_GRACE_PERIOD_120S."];
+              return;
+          }
           
-          // CRITICAL: Execute GitLab Actuation via Bridge
-          const cmd = diagnosticResultRef.current?.interventions?.[0]?.cliCommand || "gcloud compute instances reset --all";
-          
-          // Log the automated decision
-          logsRef.current = [...logsRef.current, `[SENTINEL]: FORENSIC_HOLD_EXPIRED. EXECUTING_AUTONOMOUS_RESPONSE: ${cmd}`];
-          
-          triggerGitLabActuation(cmd);
+          // PHASE 2: FAILSAFE EXPIRED -> FORCED SENTINEL ACTUATION
+          if (remediationPhase === 'FAILSAFE') {
+              // CRITICAL: Execute GitLab Actuation via Bridge
+              const cmd = diagnosticResultRef.current?.interventions?.[0]?.cliCommand || "gcloud compute instances reset --all";
+              const source = "AUTO_SENTINEL_FAILSAFE";
 
-          executeFinalRemediation(history[history.length-1], false, 180000); // TTR = 180s
-          return;
+              // Log the automated decision
+              logsRef.current = [...logsRef.current, `[SENTINEL]: FAILSAFE_TIMER_EXPIRED. HUMAN_UNRESPONSIVE. EXECUTING_FORCED_REBOOT.`];
+              
+              // OOB Alert
+              broadcastFailSafeAlert();
+
+              triggerGitLabActuation(cmd);
+
+              // TTR is approx 300s
+              executeFinalRemediation(history[history.length-1], false, Date.now() - remediationStartTimeRef.current, source);
+              return;
+          }
       }
       
       const timer = setInterval(() => {
           setRemediationTimer(t => (t !== null && t > 0 ? t - 1 : 0));
       }, 1000);
       return () => clearInterval(timer);
-  }, [remediationTimer, history]);
+  }, [remediationTimer, history, remediationPhase]);
 
   // Debug AI Uplink Trigger
   const handleDebugUplink = async () => {
@@ -356,12 +382,20 @@ export const Dashboard = () => {
   // Final Execution of Remediation (Post-Delay or Manual)
   const executeFinalRemediation = async (point: TelemetryPoint, isManual: boolean, ttrMs: number, customSource?: string) => {
       setRemediationTimer(null); // Stop timer
+      setRemediationPhase('HOLD'); // Reset phase
       setCommandStatus(`[CMD]: gcloud compute instances reset ${GCP_CONFIG.INSTANCE_ID} --zone ${GCP_CONFIG.ZONE} ... EXECUTING`);
       
+      // Calculate LATENCY_HUMAN_ACTION (Time before reset is triggered)
+      // ttrMs passed here is (now - start), which effectively captures the decision latency
+      const humanLatencyMs = ttrMs;
+
       const resetSuccess = await executeInstanceReset();
       
-      // Safety calculation for TTR
-      const ttrSec = Math.floor(Math.max(0, ttrMs) / 1000);
+      // Calculate TOTAL_TTR (Time including reset duration)
+      // Since we reset the timer start on completion, we can calculate total time now
+      const totalTtrMs = Date.now() - remediationStartTimeRef.current;
+      const totalTtrSec = Math.floor(Math.max(0, totalTtrMs) / 1000);
+      const latencySec = Math.floor(Math.max(0, humanLatencyMs) / 1000);
 
       // Increment Shift Counter
       const newCount = shiftRemediationCount + 1;
@@ -384,12 +418,12 @@ export const Dashboard = () => {
       const geminiMatch = lastGeminiMatchRef.current;
 
       // Log to CSV - Triggers 3rd Shift Auditor
-      // UPGRADE: Pass geminiMatch, Source, Shift Count, and Stall Status, and Queue Delay (default 0 for final remediation)
-      logAuditEntry(point, alertSuccess, resetSuccess, source, geminiMatch, ttrSec, remediationStartTimeRef.current, newCount, stallDetectedDuringEvent, 0);
+      // UPGRADE: Pass geminiMatch, Source, Shift Count, Stall Status, Queue Delay, and Human Latency
+      logAuditEntry(point, alertSuccess, resetSuccess, source, geminiMatch, totalTtrSec, remediationStartTimeRef.current, newCount, stallDetectedDuringEvent, 0, latencySec);
       
       if (resetSuccess) {
           lastResetTimeRef.current = Date.now();
-          logsRef.current = [...logsRef.current, `[SYSTEM]: RECOVERY_COMPLETE. SOURCE: ${source}. TTR: ${ttrSec}s`];
+          logsRef.current = [...logsRef.current, `[SYSTEM]: RECOVERY_COMPLETE. SOURCE: ${source}. TTR: ${totalTtrSec}s`];
           setCommandStatus(null);
           
           setSimulationMode('NOMINAL');
@@ -422,8 +456,21 @@ export const Dashboard = () => {
   const initiateSelfHealing = async (point: TelemetryPoint, manualTrigger = false) => {
     const now = Date.now();
 
+    // =========================================================================
+    // ALERT SEQUENCE: NOW HANDLED IN checkHeuristics FOR INSTANT TRIGGER
+    // =========================================================================
+    
+    // CALCULATE MATCH (PRELIMINARY)
+    let isMatch = false;
+    if (diagnosticResultRef.current) {
+         if (simulationModeRef.current === 'ZOMBIE' && diagnosticResultRef.current.status === SystemStatus.ZOMBIE_KERNEL) isMatch = true;
+         else if (simulationModeRef.current === 'CPU_STRIKE' && (diagnosticResultRef.current.status === SystemStatus.WARNING || diagnosticResultRef.current.status === SystemStatus.CRITICAL)) isMatch = true;
+    }
+    lastGeminiMatchRef.current = isMatch;
+
+
     // INTERRUPT LOGIC: If timer is running and user clicks button, this is USER_OOB intervention
-    if (manualTrigger && remediationTimerRef.current !== null) {
+    if (manualTrigger && (remediationTimerRef.current !== null || isHealingInProgressRef.current)) {
         logsRef.current = [...logsRef.current, "[CMD]: FORENSIC_HOLD_OVERRIDDEN_BY_USER."];
         executeFinalRemediation(point, true, now - remediationStartTimeRef.current);
         return;
@@ -432,13 +479,10 @@ export const Dashboard = () => {
     // PURE MANUAL LOGIC: No timer running, user forces reset (Pre-emptive)
     if (manualTrigger) {
         setCommandStatus(`[CMD]: MANUAL_REMEDIATION_TRIGGERED...`);
-        // If TTR stopwatch hasn't started (e.g., pre-emptive strike before heuristics matched), start it now.
         if (remediationStartTimeRef.current === 0) {
             remediationStartTimeRef.current = now;
         }
         
-        // Compute basic match for manual trigger without prior AI analysis
-        // Assume FALSE unless diagnostic already exists
         let manualMatch = false;
         if (diagnosticResultRef.current) {
             manualMatch = (simulationModeRef.current === 'ZOMBIE' && diagnosticResultRef.current.status === SystemStatus.ZOMBIE_KERNEL) ||
@@ -446,39 +490,33 @@ export const Dashboard = () => {
         }
         lastGeminiMatchRef.current = manualMatch;
 
-        const broadcastResults = await broadcastCriticalAlert(point, "MANUAL_RESET_TRIGGERED", undefined, manualMatch);
-        lastAlertSuccessRef.current = true; // Assume notification sent for record keeping
+        // Even for manual triggers, we broadcast alert if not already sent
+        await broadcastCriticalAlert(point, "MANUAL_RESET_TRIGGERED", undefined, manualMatch);
+        lastAlertSuccessRef.current = true; 
         executeFinalRemediation(point, true, now - remediationStartTimeRef.current);
         return;
     }
 
     // HYBRID AUTOMATION: Check if this is a SCHEDULED WAVE
-    // If so, trigger the auto-sentinel IMMEDIATELY (Bypass 180s Timer)
     if (simulationSourceRef.current === 'AUTO_SCHEDULER') {
          logsRef.current = [...logsRef.current, `[SENTINEL]: SCHEDULED_AUTOMATION_PROTOCOL_ACTIVE. BYPASSING_HUMAN_GATE.`];
          
-         // Trigger Visual Loading State
          setIsAutonomousActuating(true);
-         
-         // Simulate quick processing delay then remediate
          setTimeout(() => {
              const cmd = diagnosticResultRef.current?.interventions?.[0]?.cliCommand || "gcloud compute instances reset --all";
              triggerGitLabActuation(cmd);
              executeFinalRemediation(point, false, Date.now() - remediationStartTimeRef.current, "AUTO_SENTINEL_SCHEDULED");
              setIsAutonomousActuating(false);
          }, 2000);
-         
          return;
     }
     
     // AUTOMATED LOGIC (Standard Heuristic Trigger)
     const timeSinceLastReset = now - lastResetTimeRef.current;
     
-    // Safety Governor: Cool-down check
     if (timeSinceLastReset < REBOOT_COOLDOWN_MS) {
       console.warn("[SELF_HEALING]: Reset blocked by Safety Governor (Cool-down active).");
       logsRef.current = [...logsRef.current, `[WARN]: AUTO_RESET_BLOCKED. COOL_DOWN_ACTIVE (${Math.ceil((REBOOT_COOLDOWN_MS - timeSinceLastReset)/1000)}s remaining)`];
-      // Log Audit Attempt (Failed Remediation)
       logAuditEntry(point, false, false, "AUTOMATED_HEURISTIC_TRIGGER", false, 0);
       return;
     }
@@ -486,88 +524,24 @@ export const Dashboard = () => {
     if (isHealingInProgressRef.current) return;
     isHealingInProgressRef.current = true;
     
-    // Ensure Start Time is set (should have been set by checkHeuristics)
     if (remediationStartTimeRef.current === 0) {
         remediationStartTimeRef.current = now;
     }
 
-    // START FORENSIC DELAY PROTOCOL
-    setRemediationTimer(180); // 3 Minutes
-
-    // 0. GENERATE FORENSIC HYPOTHESIS (Purple Team Uplink)
-    setCommandStatus(`[CMD]: INITIATING PURPLE TEAM UPLINK... GENERATING FORENSIC HYPOTHESIS`);
-    
-    let forensicHypothesis = "";
-    try {
-        // This invokes saveReport() internally to localStorage (KING_HUD_HISTORY)
-        const analysis = await invoke_ai_analysis({
-            trigger: "HEURISTIC_ZOMBIE_DETECTION",
-            timestamp: Date.now(),
-            metrics: point,
-            alert_status: "PENDING_UPLINK",
-            remediation_source: "PURPLE_TEAM_PRE_EMPTIVE"
-        });
-        forensicHypothesis = analysis.report;
-    } catch (e) {
-        console.warn("Forensic generation failed", e);
-    }
-
-    // CALCULATE GEMINI MATCH (GROUND TRUTH VERIFICATION)
-    // In this simulation, we know the Ground Truth (simulationMode).
-    // In a real system, this would require post-mortem log parsing.
-    let isMatch = false;
-    if (diagnosticResultRef.current) {
-         // Did the AI identify the Zombie Kernel correctly?
-         if (simulationModeRef.current === 'ZOMBIE' && diagnosticResultRef.current.status === SystemStatus.ZOMBIE_KERNEL) {
-             isMatch = true;
-         }
-         // Did the AI identify the Red Team activity correctly?
-         else if (simulationModeRef.current === 'CPU_STRIKE' && (diagnosticResultRef.current.status === SystemStatus.WARNING || diagnosticResultRef.current.status === SystemStatus.CRITICAL)) {
-             isMatch = true;
-         }
-    }
-    lastGeminiMatchRef.current = isMatch;
-
-    // 1. Broadcast Alert
-    setCommandStatus(`[CMD]: BROADCASTING CRITICAL ALERT... FORENSIC HOLD ACTIVE`);
-    logsRef.current = [...logsRef.current, `[SYSTEM]: CRITICAL_FAILURE_DETECTED. INITIATING_FORENSIC_WITNESS_HOLD_180S. MATCH_CONFIDENCE: ${isMatch}`];
-
-    // PASS FORENSIC HYPOTHESIS & MATCH STATUS TO BROADCAST ENGINE (Email/SMS Link Generation)
-    const broadcastResults = await broadcastCriticalAlert(point, "ZOMBIE_KERNEL_DETECTED", forensicHypothesis, isMatch);
-    
-    // Track alert success for final logging
-    const emailResult = broadcastResults[1];
-    if (emailResult.status === 'fulfilled') {
-        const val = emailResult.value as any;
-        if (val.success) {
-            // Check for Simulation Failover
-            if (val.status === 'SIMULATED_FAILOVER') {
-                 // The Ntfy one handles the dashboard status, but here we log the email outcome
-                 logsRef.current = [...logsRef.current, "[UPLINK_SIM]: EMAIL_GATEWAY_UNREACHABLE. SIMULATION_MODE_ACTIVE. LOG_PERSISTED_LOCALLY."];
-                 lastAlertSuccessRef.current = true; // Proceed as if successful
-            } else {
-                 lastAlertSuccessRef.current = true;
-                 logsRef.current = [...logsRef.current, "[UPLINK]: EMAIL_DISPATCH_SUCCESSFUL. WAITING_FOR_USER_INTERVENTION."];
-            }
-        } else {
-            lastAlertSuccessRef.current = false;
-            logsRef.current = [...logsRef.current, "[UPLINK_WARN]: ALERT_DISPATCH_FAILED. AUTO_REMEDIATION_PENDING."];
-        }
-    } else {
-        lastAlertSuccessRef.current = false;
-        logsRef.current = [...logsRef.current, "[UPLINK_WARN]: ALERT_DISPATCH_FAILED. AUTO_REMEDIATION_PENDING."];
-    }
+    // 0. GENERATE FORENSIC HYPOTHESIS (Background process)
+    invoke_ai_analysis({
+        trigger: "HEURISTIC_ZOMBIE_DETECTION",
+        timestamp: Date.now(),
+        metrics: point,
+        alert_status: "ALERT_DISPATCHED",
+        remediation_source: "PURPLE_TEAM_PRE_EMPTIVE"
+    }).catch(e => console.warn("Forensic generation failed", e));
 
     // 2. AUTONOMOUS OVERRIDE (3RD SHIFT ONLY)
     if (currentShiftRef.current === '3RD_SHIFT') {
          logsRef.current = [...logsRef.current, `[AUTONOMOUS]: 3rd Shift Sentinel has bypassed the human gate. Dispatching remediation to GitLab Duo Agent...`];
-         
-         // Trigger Visual Loading State (The Glow)
          setIsAutonomousActuating(true);
-
-         // Add artificial delay for visual confirmation
          setTimeout(() => {
-             // Calculate Shockwave Origin
              if (remediationButtonRef.current) {
                  const rect = remediationButtonRef.current.getBoundingClientRect();
                  setShockwavePos({
@@ -576,25 +550,38 @@ export const Dashboard = () => {
                  });
              }
              setShockwaveActive(true);
-
-             // Execute GitLab Actuation via Bridge
              const cmd = diagnosticResultRef.current?.interventions?.[0]?.cliCommand || "gcloud compute instances reset --all";
              triggerGitLabActuation(cmd);
-    
-             // Execute Remediation immediately (Bypassing 180s Timer)
              executeFinalRemediation(point, false, Date.now() - remediationStartTimeRef.current, "AUTO_REMEDIATION_3RD_SHIFT");
-             
              setIsAutonomousActuating(false);
-             
-             // Cleanup Shockwave
              setTimeout(() => setShockwaveActive(false), 2000);
          }, 2000);
-         
          return;
     }
 
-    // NOTE: If not 3rd Shift, we wait for timer or user interrupt.
+    // 3. START FORENSIC DELAY PROTOCOL (1st/2nd Shift)
+    // IMPORTANT: Timer scale set to 180s (3 minutes)
+    setRemediationPhase('HOLD');
+    setRemediationTimer(180); 
+    setCommandStatus(`[CMD]: INITIATING FORENSIC HOLD (180s)...`);
   };
+
+  // ADMIN STRIKE 5-SECOND PULSE LOGIC
+  useEffect(() => {
+    if (simulationSource === 'ADMIN_REMOTE_STRIKE') {
+      const timer = setTimeout(() => {
+        if (simulationMode === 'ZOMBIE') {
+           setSimulationMode('NOMINAL');
+           setSimulationSource('UNKNOWN');
+           setSystemStatus(SystemStatus.NOMINAL);
+           isFractureActiveRef.current = false;
+           consecutiveZombieTicksRef.current = 0;
+           logsRef.current = [...logsRef.current, "[INFO]: REMOTE_STRIKE_PULSE_ENDED. TELEMETRY_NORMALIZING."];
+        }
+      }, 5000); // 5 Seconds Exact Pulse
+      return () => clearTimeout(timer);
+    }
+  }, [simulationSource, simulationMode]);
 
   // Simulation Tick
   useEffect(() => {
@@ -608,11 +595,23 @@ export const Dashboard = () => {
           let newCpu, newRam, newThreads, newIo;
 
           if (simulationMode === 'ZOMBIE') {
-            newCpu = Math.max(0, (Math.random() * 2));
-            newRam = Math.min(99, (prev[prev.length - 1].ram + 2)); 
-            newThreads = prev[prev.length - 1].threads + 5; 
-            newIo = 0.5;
-            logsRef.current = [...logsRef.current.slice(-10), ...MOCK_LOGS_ZOMBIE.slice(0, 1)];
+            // ADMIN STRIKE LOGIC: EXACT METRICS
+            if (simulationSource === 'ADMIN_REMOTE_STRIKE') {
+                newCpu = 0.01;
+                newRam = 98.0;
+                newThreads = prev[prev.length - 1].threads; // Freeze threads
+                newIo = 0.0;
+                // Add a log only occasionally to avoid spamming
+                if (Math.random() > 0.8) {
+                   logsRef.current = [...logsRef.current.slice(-10), ...MOCK_LOGS_ZOMBIE.slice(0, 1)];
+                }
+            } else {
+                newCpu = Math.max(0, (Math.random() * 2));
+                newRam = Math.min(99, (prev[prev.length - 1].ram + 2)); 
+                newThreads = prev[prev.length - 1].threads + 5; 
+                newIo = 0.5;
+                logsRef.current = [...logsRef.current.slice(-10), ...MOCK_LOGS_ZOMBIE.slice(0, 1)];
+            }
           } else if (simulationMode === 'CPU_STRIKE') {
             newCpu = 95 + Math.random() * 5; 
             newRam = 50 + Math.random() * 10;
@@ -672,7 +671,7 @@ export const Dashboard = () => {
     }
 
     return () => clearInterval(interval);
-  }, [isPlaying, simulationMode, isStalled]); // Added isStalled to dependency to ensure state updates correctly in loop
+  }, [isPlaying, simulationMode, isStalled, simulationSource]);
 
   // Heuristic Trigger
   const checkHeuristics = useCallback(async (point: TelemetryPoint) => {
@@ -694,6 +693,31 @@ export const Dashboard = () => {
       if (remediationStartTimeRef.current === 0) {
           remediationStartTimeRef.current = now;
       }
+
+      // INSTANT NOTIFICATION TRIGGER (First Action)
+      setCommandStatus(`[CMD]: BROADCASTING IMMEDIATE TACTICAL ALERT...`);
+      logsRef.current = [...logsRef.current, `[SYSTEM]: FRACTURE_CONFIRMED. BROADCASTING_ON_ALL_CHANNELS.`];
+      broadcastCriticalAlert(point, "ZOMBIE_KERNEL_DETECTED", undefined, false).then(broadcastResults => {
+          const emailResult = broadcastResults[1];
+          if (emailResult.status === 'fulfilled') {
+              const val = emailResult.value as any;
+              if (val.success) {
+                  if (val.status === 'SIMULATED_FAILOVER') {
+                      logsRef.current = [...logsRef.current, "[UPLINK_SIM]: EMAIL_GATEWAY_UNREACHABLE. SIMULATION_MODE_ACTIVE. LOG_PERSISTED_LOCALLY."];
+                      lastAlertSuccessRef.current = true;
+                  } else {
+                      lastAlertSuccessRef.current = true;
+                      logsRef.current = [...logsRef.current, "[UPLINK]: EMAIL_DISPATCH_SUCCESSFUL. WAITING_FOR_USER_INTERVENTION."];
+                  }
+              } else {
+                  lastAlertSuccessRef.current = false;
+                  logsRef.current = [...logsRef.current, "[UPLINK_WARN]: ALERT_DISPATCH_FAILED. AUTO_REMEDIATION_PENDING."];
+              }
+          } else {
+              lastAlertSuccessRef.current = false;
+              logsRef.current = [...logsRef.current, "[UPLINK_WARN]: ALERT_DISPATCH_FAILED. AUTO_REMEDIATION_PENDING."];
+          }
+      });
       
       const alertResult = await sendNtfyAlert("Zombie Kernel Detected. Systemic Disorientation (C2 Fracture) in progress on GCP Instance.", 5);
       
@@ -744,7 +768,7 @@ export const Dashboard = () => {
          // Determine Specific Status Message
          if (simulationSourceRef.current === 'AUTO_SCHEDULER') {
              result.status = SystemStatus.EXECUTING_SCHEDULED_SENTINEL_PROTOCOL;
-         } else if (simulationSourceRef.current === 'RED_TEAM_MANUAL' || simulationSourceRef.current === 'ADMIN_CONSOLE_MANUAL') {
+         } else if (simulationSourceRef.current === 'RED_TEAM_MANUAL' || simulationSourceRef.current === 'ADMIN_CONSOLE_MANUAL' || simulationSourceRef.current === 'ADMIN_REMOTE_STRIKE') {
              result.status = SystemStatus.EMERGENCY_ADVERSARY_EMULATION_IN_PROGRESS;
          } else if (systemStatus === SystemStatus.UPLINK_FAILURE || systemStatus === SystemStatus.UPLINK_RECONNECTING || systemStatus === SystemStatus.UPLINK_SIMULATION) {
              result.status = systemStatus;
@@ -761,7 +785,7 @@ export const Dashboard = () => {
       if (isFractureActiveRef.current) {
           if (simulationSourceRef.current === 'AUTO_SCHEDULER') {
              setSystemStatus(SystemStatus.EXECUTING_SCHEDULED_SENTINEL_PROTOCOL);
-         } else if (simulationSourceRef.current === 'RED_TEAM_MANUAL' || simulationSourceRef.current === 'ADMIN_CONSOLE_MANUAL') {
+         } else if (simulationSourceRef.current === 'RED_TEAM_MANUAL' || simulationSourceRef.current === 'ADMIN_CONSOLE_MANUAL' || simulationSourceRef.current === 'ADMIN_REMOTE_STRIKE') {
              setSystemStatus(SystemStatus.EMERGENCY_ADVERSARY_EMULATION_IN_PROGRESS);
          }
       }
@@ -799,6 +823,7 @@ export const Dashboard = () => {
     <HUDLayout 
         status={systemStatus} 
         remediationTimer={remediationTimer}
+        remediationPhase={remediationPhase}
         shiftRemediationCount={shiftRemediationCount}
         isStalled={isStalled}
     >
@@ -892,6 +917,15 @@ export const Dashboard = () => {
                   {/* Modal Header */}
                   <div className="p-4 border-b border-gray-700 flex justify-between items-center bg-gray-900 z-30">
                       <div className="flex flex-col">
+                          <div className="flex items-center gap-4 mb-2">
+                             <button 
+                                onClick={() => setShowShiftReports(false)}
+                                className="flex items-center justify-center gap-2 p-1.5 px-3 rounded font-bold transition-all bg-gray-900 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-[10px] font-mono uppercase tracking-widest"
+                             >
+                                <ArrowLeft size={12} />
+                                [[ EXIT_TO_MAIN_HUD ]]
+                             </button>
+                          </div>
                           <div className="flex items-center gap-2 text-hud-primary">
                               <FileText className="w-5 h-5" />
                               <h2 className="text-xl font-display uppercase tracking-widest">// FORENSIC_LOGS // WATCH: {currentShift}</h2>

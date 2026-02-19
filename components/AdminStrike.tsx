@@ -1,15 +1,28 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { ShieldAlert, Terminal, Skull, AlertTriangle, Fingerprint } from 'lucide-react';
+import { ShieldAlert, Terminal, Skull, AlertTriangle, Fingerprint, ArrowLeft } from 'lucide-react';
 import { TrafficContext } from '../App';
+import { useNavigate } from 'react-router-dom';
 
 export const AdminStrike = () => {
   const [authorized, setAuthorized] = useState(false);
   const [secret, setSecret] = useState('');
   const [logs, setLogs] = useState<string[]>([]);
   const [isStriking, setIsStriking] = useState(false);
+  const navigate = useNavigate();
 
   // Consume Context
   const { triggerStrike } = useContext(TrafficContext);
+
+  // Global ESC Listener for Navigation
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        navigate('/');
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [navigate]);
 
   // Check secret against environment or default
   const checkAuth = () => {
@@ -31,16 +44,26 @@ export const AdminStrike = () => {
     setIsStriking(true);
     addLog("INITIATING REMOTE ZOMBIE STRIKE PROTOCOL...");
     
-    // Call Context Trigger instead of direct service call
-    triggerStrike("ADMIN_CONSOLE_MANUAL");
+    // Call Context Trigger with the specific SOURCE required for 5s pulse logic
+    triggerStrike("ADMIN_REMOTE_STRIKE");
     
     setTimeout(() => {
         addLog("SIGNAL SENT. TARGET NODES INFECTED.");
         addLog("[STRIKE]: ADVERSARY_PAYLOAD_DEPLOYED.");
         addLog("AUDIT TRAIL: SOURCE: ADMIN_REMOTE_STRIKE");
         setIsStriking(false);
-    }, 1500);
+    }, 5000); // 5 Seconds visual feedback to match the pulse
   };
+
+  const ExitButton = () => (
+    <button 
+      onClick={() => navigate('/')}
+      className="absolute top-4 left-4 z-50 flex items-center justify-center gap-2 p-2 rounded font-bold transition-all bg-gray-900 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-xs font-mono uppercase tracking-widest backdrop-blur-md hover:bg-emerald-900/20 hover:border-emerald-500/50"
+    >
+      <ArrowLeft size={14} />
+      [[ EXIT_TO_DASHBOARD ]]
+    </button>
+  );
 
   // --------------------------------------------------------------------------
   // SENTINEL 404 / ACCESS CONTROL SCREEN
@@ -48,6 +71,7 @@ export const AdminStrike = () => {
   if (!authorized) {
     return (
       <div className="min-h-screen bg-black text-[#444] font-mono flex flex-col items-center justify-center p-4 relative overflow-hidden">
+        <ExitButton />
         {/* Background Noise */}
         <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'url(https://www.transparenttextures.com/patterns/dark-matter.png)' }}></div>
         
@@ -98,12 +122,14 @@ export const AdminStrike = () => {
   // --------------------------------------------------------------------------
   return (
     <div className="min-h-screen bg-[#050000] text-red-600 font-mono overflow-hidden flex flex-col relative">
+        <ExitButton />
         {/* CRT Scanline Effect */}
         <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(255,0,0,0.02),rgba(255,0,0,0.06))] z-[50] bg-[length:100%_2px,3px_100%] pointer-events-none"></div>
 
         {/* Top Bar */}
-        <div className="flex justify-between items-center p-4 border-b border-red-900/50 bg-red-950/10 backdrop-blur-md">
-            <div className="flex items-center gap-3">
+        <div className="flex justify-between items-center p-4 border-b border-red-900/50 bg-red-950/10 backdrop-blur-md pl-40 md:pl-4">
+            {/* Added padding-left for mobile to accommodate absolute button, though md layout handles absolute better usually */}
+            <div className="flex items-center gap-3 ml-0 md:ml-32 lg:ml-0">
                 <Terminal className="w-6 h-6 text-red-500" />
                 <h1 className="text-2xl font-display font-bold tracking-widest text-red-500">
                     C2_RED_CONSOLE <span className="text-xs align-top opacity-50">v1.0</span>
@@ -150,8 +176,8 @@ export const AdminStrike = () => {
                     }`}
                 >
                     <ShieldAlert className={`w-16 h-16 mb-4 transition-transform duration-200 ${isStriking ? 'animate-spin' : ''}`} />
-                    <span className="text-xl font-bold tracking-widest">
-                        {isStriking ? 'DEPLOYING...' : 'INITIATE'}
+                    <span className="text-xl font-bold tracking-widest text-center px-4">
+                        {isStriking ? 'DEPLOYING...' : '[[INITIATE_REMOTE_ZOMBIE_STRIKE]]'}
                     </span>
                     <span className="text-xs mt-1 opacity-70">ZOMBIE PAYLOAD</span>
                 </button>
