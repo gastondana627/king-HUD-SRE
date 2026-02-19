@@ -44,6 +44,7 @@ export const AdminStrike = () => {
          setIsStriking(false);
          setTimer(null); // Clear timer immediately
          addLog("[SYSTEM]: REMEDIATION CONFIRMED BY SENTINEL FAIL-SAFE.");
+         addLog("[SYSTEM]: UI RESET TO TARGET_LOCKED.");
       }
     };
     return () => channel.close();

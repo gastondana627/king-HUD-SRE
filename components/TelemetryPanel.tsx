@@ -4,6 +4,7 @@ import { TelemetryPoint } from '../types';
 
 interface TelemetryPanelProps {
   data: TelemetryPoint[];
+  complianceScore?: number;
 }
 
 // Custom Tooltip for Forensic Context
@@ -53,15 +54,24 @@ const ForensicTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({ data }) => {
+export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({ data, complianceScore = 100 }) => {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
       {/* CPU & IO */}
-      <div className="hud-border p-4 flex flex-col h-64 lg:h-auto">
+      <div className="hud-border p-4 flex flex-col h-64 lg:h-auto relative">
         <h3 className="text-hud-primary text-sm font-bold mb-2 uppercase tracking-wider flex justify-between">
           <span>Processor Core Metrics</span>
           <span className="text-xs opacity-70">RTS: Active</span>
         </h3>
+        
+        {/* COMPLIANCE SCORE OVERLAY */}
+        <div className="absolute top-4 right-4 flex items-center gap-2 z-10 bg-black/50 px-2 rounded border border-gray-800">
+            <span className="text-[9px] text-gray-400 uppercase tracking-wider">Forensic Compliance:</span>
+            <span className={`text-xs font-bold ${complianceScore < 100 ? 'text-red-500' : 'text-emerald-500'}`}>
+                {complianceScore}%
+            </span>
+        </div>
+
         <div className="flex-1 w-full min-h-0">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={data}>

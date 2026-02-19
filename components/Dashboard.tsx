@@ -51,6 +51,9 @@ export const Dashboard = () => {
   const [forensicDecayTimer, setForensicDecayTimer] = useState<number | null>(null);
   const [isForensicStale, setIsForensicStale] = useState(false);
 
+  // Compliance & Leash Logic
+  const [complianceScore, setComplianceScore] = useState<number>(100);
+
   // Operational Intensity & Hiccup Logic State
   const [isStalled, setIsStalled] = useState<boolean>(false);
 
@@ -460,6 +463,18 @@ export const Dashboard = () => {
 
   // Final Execution of Remediation (Post-Delay or Manual)
   const executeFinalRemediation = async (point: TelemetryPoint, isManual: boolean, ttrMs: number, customSource?: string) => {
+      // THE LEASH: Sentinel is STRICTLY PROHIBITED from executing until timer expires.
+      // COMPLIANCE MONITORING: If the AI (Sentinel) attempts to act while the hold is active, flag it and deduct score.
+      if (!isManual && remediationTimerRef.current !== null && remediationTimerRef.current > 0) {
+          // VISUALS: Log the stand-down status
+          logsRef.current = [...logsRef.current, "[SENTINEL]: STANDING BY... AWAITING HUMAN COMMIT."];
+          // COMPLIANCE DEDUCTION
+          logsRef.current = [...logsRef.current, "[COMPLIANCE]: UNAUTHORIZED_AI_INTERVENTION_BLOCKED. DEDUCTING_SCORE."];
+          setComplianceScore(prev => Math.max(0, prev - 5));
+          console.warn("Remediation Blocked: Forensic Window Active (Sentinel Leashed)");
+          return;
+      }
+
       setRemediationTimer(null); // Stop timer
       setRemediationPhase('HOLD'); // Reset phase
       setCommandStatus(`[CMD]: gcloud compute instances reset ${GCP_CONFIG.INSTANCE_ID} --zone ${GCP_CONFIG.ZONE} ... EXECUTING`);
@@ -504,7 +519,7 @@ export const Dashboard = () => {
       
       if (resetSuccess) {
           lastResetTimeRef.current = Date.now();
-          // SYNC: Clear Strike on Red Console
+          // GLOBAL SYNC: Clear Strike on Red Console
           broadcastStrikeClear();
           
           logsRef.current = [...logsRef.current, `[SYSTEM]: RECOVERY_COMPLETE. SOURCE: ${source}. TTR: ${totalTtrSec}s`];
@@ -584,21 +599,10 @@ export const Dashboard = () => {
         return;
     }
 
-    // HYBRID AUTOMATION: Check if this is a SCHEDULED WAVE
-    if (simulationSourceRef.current === 'AUTO_SCHEDULER') {
-         logsRef.current = [...logsRef.current, `[SENTINEL]: SCHEDULED_AUTOMATION_PROTOCOL_ACTIVE. BYPASSING_HUMAN_GATE.`];
-         
-         setIsAutonomousActuating(true);
-         setTimeout(() => {
-             const cmd = diagnosticResultRef.current?.interventions?.[0]?.cliCommand || "gcloud compute instances reset --all";
-             triggerGitLabActuation(cmd);
-             executeFinalRemediation(point, false, Date.now() - remediationStartTimeRef.current, "AUTO_SENTINEL_SCHEDULED");
-             setIsAutonomousActuating(false);
-         }, 2000);
-         return;
-    }
+    // AUTOMATION LOGIC: ENFORCE HUMAN-FIRST WINDOW
+    // If not manual, we fall through to the hold timer logic.
+    // We explicitly remove immediate bypasses for 3rd Shift and Scheduled Waves to comply with strict protocol.
     
-    // AUTOMATED LOGIC (Standard Heuristic Trigger)
     const timeSinceLastReset = now - lastResetTimeRef.current;
     
     if (timeSinceLastReset < REBOOT_COOLDOWN_MS) {
@@ -624,31 +628,11 @@ export const Dashboard = () => {
         remediation_source: "PURPLE_TEAM_PRE_EMPTIVE"
     }).catch(e => console.warn("Forensic generation failed", e));
 
-    // 2. AUTONOMOUS OVERRIDE (3RD SHIFT ONLY)
-    if (currentShiftRef.current === '3RD_SHIFT') {
-         logsRef.current = [...logsRef.current, `[AUTONOMOUS]: 3rd Shift Sentinel has bypassed the human gate. Dispatching remediation to GitLab Duo Agent...`];
-         setIsAutonomousActuating(true);
-         setTimeout(() => {
-             if (remediationButtonRef.current) {
-                 const rect = remediationButtonRef.current.getBoundingClientRect();
-                 setShockwavePos({
-                     x: rect.left + rect.width / 2,
-                     y: rect.top + rect.height / 2
-                 });
-             }
-             setShockwaveActive(true);
-             const cmd = diagnosticResultRef.current?.interventions?.[0]?.cliCommand || "gcloud compute instances reset --all";
-             triggerGitLabActuation(cmd);
-             executeFinalRemediation(point, false, Date.now() - remediationStartTimeRef.current, "AUTO_REMEDIATION_3RD_SHIFT");
-             setIsAutonomousActuating(false);
-             setTimeout(() => setShockwaveActive(false), 2000);
-         }, 2000);
-         return;
-    }
+    // 1. ANNOUNCE SENTINEL STATUS
+    // Regardless of Shift or Source, the automated agent must wait.
+    logsRef.current = [...logsRef.current, `[SENTINEL]: STANDING BY... AWAITING HUMAN COMMIT.`];
 
-    // 3. START FORENSIC DELAY PROTOCOL (1st/2nd Shift)
-    // HUMAN-FIRST PROTOCOL ENFORCEMENT
-    // Logic: If currentShift is 1 or 2, executeInstanceReset is locked behind 180s delay.
+    // 2. START FORENSIC DELAY PROTOCOL (Universal Enforcement)
     logsRef.current = [...logsRef.current, `[PROTOCOL]: HUMAN_FIRST_MANDATE_ACTIVE (${currentShiftRef.current}). INITIATING_FORENSIC_HOLD.`];
     
     setRemediationPhase('HOLD');
@@ -1298,7 +1282,7 @@ export const Dashboard = () => {
         {/* Center: Charts */}
         <div className="col-span-12 lg:col-span-5 flex flex-col gap-6 h-[400px] lg:h-auto">
           <div className="flex-1 min-h-[250px]">
-            <TelemetryPanel data={history} />
+            <TelemetryPanel data={history} complianceScore={complianceScore} />
           </div>
           <div className="h-[250px]">
             <AdversaryRadar 
