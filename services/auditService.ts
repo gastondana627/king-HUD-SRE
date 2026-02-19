@@ -8,7 +8,8 @@ import { sendEmailAlert } from './notificationService';
 // High-Resolution Timestamps & Standardized Feature Engineering
 // Added LATENCY_HUMAN_ACTION for precise reaction time tracking separate from system reboot time.
 // REFACTOR: HEURISTIC_CONFIDENCE -> AI_FORENSIC_CONFIDENCE
-export const CSV_HEADER = "UTC_DATE,UTC_TIME_PRECISION,UNIX_EPOCH,INCIDENT_UUID,TRIGGER_TYPE,CPU_PEAK,RAM_PEAK,AI_THOUGHT_LATENCY_SEC,TOTAL_RECOVERY_TIME_SEC,SHIFT_ID,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,AI_FORENSIC_CONFIDENCE,COGNITIVE_LOAD_SCORE,STALL_DETECTED,QUEUE_DELAY_SEC,IS_ADVERSARY_MODE,LATENCY_HUMAN_ACTION_SEC";
+// ADDED: REMEDIATION_TYPE (Manual vs Sentinel)
+export const CSV_HEADER = "UTC_DATE,UTC_TIME_PRECISION,UNIX_EPOCH,INCIDENT_UUID,TRIGGER_TYPE,REMEDIATION_TYPE,CPU_PEAK,RAM_PEAK,AI_THOUGHT_LATENCY_SEC,TOTAL_RECOVERY_TIME_SEC,SHIFT_ID,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,AI_FORENSIC_CONFIDENCE,COGNITIVE_LOAD_SCORE,STALL_DETECTED,QUEUE_DELAY_SEC,IS_ADVERSARY_MODE,LATENCY_HUMAN_ACTION_SEC";
 const STORAGE_KEY = "telemetry_audit.csv";
 const HISTORY_KEY = "KING_HUD_HISTORY"; 
 const LAST_REPORT_KEY = "king_hud_last_daily_report";
@@ -346,17 +347,21 @@ export const logAuditEntry = async (
   else if (src.includes("SENTINEL") || src.includes("AUTONOMOUS")) triggerType = "AUTO";
   else triggerType = "MANUAL"; // Default fallback
 
+  // 4. Remediation Type (Performance Analysis)
+  // If Manual Trigger, it's Manual. If Auto Trigger, it's Sentinel.
+  const remediationType = triggerType === "MANUAL" ? "MANUAL_OPERATOR" : "SENTINEL_AI";
+
   // NEW METADATA: ADVERSARY MODE FILTER
   const isAdversaryMode = src.includes("ADMIN") || src.includes("RED_TEAM") || src.includes("STRIKE");
 
-  // 4. Shift ID Integer Mapping
+  // 5. Shift ID Integer Mapping
   const shiftId = currentShift === "1ST_SHIFT" ? 1 : currentShift === "2ND_SHIFT" ? 2 : 3;
 
-  // 5. Heuristic Metrics
+  // 6. Heuristic Metrics
   // Simulate Analysis Latency: 1.5s to 4.5s (Typical Gemini/Claude API response time)
   const analysisLatency = (Math.random() * (4.5 - 1.5) + 1.5).toFixed(2);
   
-  // 6. Clean TTR (Integer)
+  // 7. Clean TTR (Integer)
   const ttrClean = Math.floor(timeToRecovery);
   const latencyClean = Math.floor(humanLatency);
 
@@ -400,8 +405,8 @@ export const logAuditEntry = async (
   // Use the SNAPSHOT value passed from UI/Dashboard for the CSV
   const recordedConfidence = aiConfidence > 0 ? aiConfidence : activeIncidentPeakConfidence;
 
-  // CSV FORMAT: UTC_DATE,UTC_TIME_PRECISION,UNIX_EPOCH,INCIDENT_UUID,TRIGGER_TYPE,CPU_PEAK,RAM_PEAK,AI_THOUGHT_LATENCY_SEC,TOTAL_RECOVERY_TIME_SEC,SHIFT_ID,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,AI_FORENSIC_CONFIDENCE,COGNITIVE_LOAD_SCORE,STALL_DETECTED,QUEUE_DELAY_SEC,IS_ADVERSARY_MODE,LATENCY_HUMAN_ACTION_SEC
-  const line = `\n${utcDate},${utcTimePrecision},${unixEpoch},${forensicId},${triggerType},${metrics.cpu.toFixed(2)},${metrics.ram.toFixed(2)},${analysisLatency},${ttrClean},${shiftId},${activeDrill},${geminiMatch},${recordedConfidence},${cognitiveScore},${stallDetected},${queueDelay},${isAdversaryMode},${latencyClean}`;
+  // CSV FORMAT: UTC_DATE,UTC_TIME_PRECISION,UNIX_EPOCH,INCIDENT_UUID,TRIGGER_TYPE,REMEDIATION_TYPE,CPU_PEAK,RAM_PEAK,AI_THOUGHT_LATENCY_SEC,TOTAL_RECOVERY_TIME_SEC,SHIFT_ID,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,AI_FORENSIC_CONFIDENCE,COGNITIVE_LOAD_SCORE,STALL_DETECTED,QUEUE_DELAY_SEC,IS_ADVERSARY_MODE,LATENCY_HUMAN_ACTION_SEC
+  const line = `\n${utcDate},${utcTimePrecision},${unixEpoch},${forensicId},${triggerType},${remediationType},${metrics.cpu.toFixed(2)},${metrics.ram.toFixed(2)},${analysisLatency},${ttrClean},${shiftId},${activeDrill},${geminiMatch},${recordedConfidence},${cognitiveScore},${stallDetected},${queueDelay},${isAdversaryMode},${latencyClean}`;
   
   const existing = localStorage.getItem(STORAGE_KEY) || CSV_HEADER;
   localStorage.setItem(STORAGE_KEY, existing + line);
@@ -594,17 +599,58 @@ export const getShiftReports = () => {
   }
 };
 
-export const downloadAuditLog = () => {
+// MULTI-SHIFT EXPORT LOGIC
+export const exportAuditLog = (shifts: number[] = [], filename = "king_hud_audit_export") => {
   const csvContent = localStorage.getItem(STORAGE_KEY) || CSV_HEADER;
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const lines = csvContent.trim().split('\n');
+  
+  // Use first line as header, assume it matches CSV_HEADER mostly
+  const header = lines[0]; 
+  // Determine SHIFT_ID index dynamically or default to 10 based on updated header
+  // HEADER: ... TOTAL_RECOVERY_TIME_SEC, SHIFT_ID, ...
+  const headers = header.split(',');
+  const shiftIndex = headers.indexOf('SHIFT_ID');
+  
+  if (shiftIndex === -1 && lines.length > 1) {
+      console.error("SHIFT_ID column not found in CSV header.");
+      downloadAuditLog(); // Fallback to full dump
+      return;
+  }
+
+  const data = lines.slice(1);
+
+  // If shifts array is empty, export all (Master)
+  const filteredData = shifts.length === 0 
+    ? data 
+    : data.filter(line => {
+        const cols = line.split(',');
+        // Defensive check
+        if (cols.length <= shiftIndex) return false;
+        
+        const shiftId = parseInt(cols[shiftIndex]); 
+        return !isNaN(shiftId) && shifts.includes(shiftId);
+    });
+
+  if (filteredData.length === 0) {
+      alert("No data found for the selected shift(s).");
+      return;
+  }
+
+  const output = [header, ...filteredData].join('\n');
+  
+  const blob = new Blob([output], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement("a");
   const url = URL.createObjectURL(blob);
   link.setAttribute("href", url);
-  link.setAttribute("download", `king_hud_audit_${Date.now()}.csv`);
+  link.setAttribute("download", `${filename}_${Date.now()}.csv`);
   link.style.visibility = 'hidden';
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+};
+
+export const downloadAuditLog = () => {
+  exportAuditLog([], "king_hud_audit_full");
 };
 
 export const triggerZombieStrike = (delaySec: number, source: string) => {
@@ -615,10 +661,10 @@ export const triggerZombieStrike = (delaySec: number, source: string) => {
   channel.close();
 };
 
-export const broadcastStrikeClear = () => {
-  console.log("[AUDIT_SERVICE]: Broadcasting Global Strike Clear Signal...");
+export const broadcastStrikeClear = (source: string = "UNKNOWN") => {
+  console.log(`[AUDIT_SERVICE]: Broadcasting Global Strike Clear Signal (Source: ${source})...`);
   const channel = new BroadcastChannel('king_hud_c2_channel');
-  channel.postMessage({ type: 'STRIKE_CLEARED_GLOBAL' });
+  channel.postMessage({ type: 'STRIKE_CLEARED_GLOBAL', source });
   channel.close();
 };
 
@@ -671,7 +717,18 @@ export const getStrikeMetrics = () => {
     if (parts.length < 10) return;
 
     const timestamp = parseInt(parts[2]);
-    const shiftId = parseInt(parts[9]);
+    
+    // Locate SHIFT_ID index logic:
+    // With new header, SHIFT_ID is index 10. But handle potential old formats.
+    // Assuming new format index 10 for safety, but check length.
+    // Index 9 was old SHIFT_ID. If length > 18 (new columns), likely 10.
+    // Actually, getStrikeMetrics is internal logic, it should probably be robust.
+    // For simplicity in this demo, let's look at parts[parts.length - 9] logic or iterate.
+    // Let's rely on standard index 10 for now assuming clean state or append.
+    // If user has old data, index 9 is shift ID. New data index 10.
+    // Heuristic: If index 9 is 1/2/3, use it. If index 10 is 1/2/3, use it.
+    let shiftId = parseInt(parts[10]);
+    if (isNaN(shiftId)) shiftId = parseInt(parts[9]);
 
     if (!isNaN(timestamp) && (now - timestamp <= oneDay)) {
         total24h++;

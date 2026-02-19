@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { ShieldAlert, Terminal, Skull, AlertTriangle, Fingerprint, ArrowLeft, Hourglass } from 'lucide-react';
+import React, { useState, useEffect, useContext, useRef } from 'react';
+import { ShieldAlert, Terminal, Skull, AlertTriangle, Fingerprint, ArrowLeft, Hourglass, Zap, Lock } from 'lucide-react';
 import { TrafficContext } from '../App';
 import { useNavigate } from 'react-router-dom';
-import { INITIAL_HOLD_TIME } from '../constants';
+import { INITIAL_HOLD_TIME, FAILSAFE_GRACE_TIME } from '../constants';
 
 export const AdminStrike = () => {
   const [authorized, setAuthorized] = useState(false);
@@ -10,7 +10,15 @@ export const AdminStrike = () => {
   const [logs, setLogs] = useState<string[]>([]);
   const [isStriking, setIsStriking] = useState(false);
   const [timer, setTimer] = useState<number | null>(null);
+  
+  // Phase Management: IDLE -> PHASE_1 (Forensic Hold) -> PHASE_2 (Sentinel Fail-Safe)
+  const [phase, setPhase] = useState<'IDLE' | 'PHASE_1' | 'PHASE_2'>('IDLE');
+  
+  const [resolutionType, setResolutionType] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  // Timestamp Ref for Lag-Proof Calculation
+  const strikeStartRef = useRef<number | null>(null);
 
   // Consume Context
   const { triggerStrike, isAgentBusy } = useContext(TrafficContext);
@@ -26,38 +34,83 @@ export const AdminStrike = () => {
     return () => window.removeEventListener('keydown', handleEsc);
   }, [navigate]);
 
-  // Sync Timer with Agent Busy State
+  // Sync Timer Logic (Two-Phase Escalation)
   useEffect(() => {
-      if (isAgentBusy && timer === null) {
-          // Sync with the Forensic Window (180s)
-          setTimer(INITIAL_HOLD_TIME);
-      } else if (!isAgentBusy) {
+      if (isAgentBusy) {
+          // Initialize Start Time if new strike
+          if (strikeStartRef.current === null) {
+              strikeStartRef.current = Date.now();
+              setPhase('PHASE_1');
+          }
+
+          const interval = setInterval(() => {
+              if (!strikeStartRef.current) return;
+              
+              const now = Date.now();
+              const elapsedSec = Math.floor((now - strikeStartRef.current) / 1000);
+              
+              // PHASE 1: Forensic Hold (0 - 180s)
+              if (elapsedSec < INITIAL_HOLD_TIME) {
+                  setPhase('PHASE_1');
+                  setTimer(Math.max(0, INITIAL_HOLD_TIME - elapsedSec));
+              } 
+              // PHASE 2: Sentinel Fail-Safe (180s - 300s)
+              else if (elapsedSec < (INITIAL_HOLD_TIME + FAILSAFE_GRACE_TIME)) {
+                  if (phase !== 'PHASE_2') {
+                      setPhase('PHASE_2');
+                      addLog("[WARNING]: FORENSIC WINDOW EXPIRED. ESCALATING TO SENTINEL PROTOCOL.");
+                  }
+                  setTimer(Math.max(0, (INITIAL_HOLD_TIME + FAILSAFE_GRACE_TIME) - elapsedSec));
+              } 
+              // TIMEOUT
+              else {
+                  setTimer(0);
+                  // Dashboard executes reset here
+              }
+          }, 1000);
+
+          return () => clearInterval(interval);
+
+      } else {
+          // Reset State when agent becomes free
           setTimer(null);
+          strikeStartRef.current = null;
+          setPhase('IDLE');
       }
-  }, [isAgentBusy]);
+  }, [isAgentBusy, phase]);
 
   // Listen for Global Clear Event (Cross-Console Sync)
   useEffect(() => {
     const channel = new BroadcastChannel('king_hud_c2_channel');
     channel.onmessage = (event) => {
       if (event.data.type === 'STRIKE_CLEARED_GLOBAL') {
-         setIsStriking(false);
-         setTimer(null); // Clear timer immediately
-         addLog("[SYSTEM]: REMEDIATION CONFIRMED BY SENTINEL FAIL-SAFE.");
-         addLog("[SYSTEM]: UI RESET TO TARGET_LOCKED.");
+         const source = event.data.source || 'UNKNOWN';
+         let type = 'UNKNOWN_RESOLUTION';
+         
+         if (source.includes('MANUAL') || source.includes('DASHBOARD') || source.includes('BLUE_TEAM')) {
+             type = 'MANUAL_OVERRIDE';
+         } else if (source.includes('SENTINEL') || source.includes('AUTO') || source.includes('FAILSAFE')) {
+             type = 'AUTONOMOUS_FAILSAFE';
+         }
+
+         setResolutionType(type);
+         setTimer(null); 
+         setPhase('IDLE');
+         strikeStartRef.current = null;
+
+         addLog(`[SYSTEM]: REMEDIATION CONFIRMED: ${source}`);
+         addLog(`[SYSTEM]: ATTRIBUTION CONFIRMED: ${type}`);
+         
+         // 10-second Post-Action Window
+         setTimeout(() => {
+             setResolutionType(null);
+             setIsStriking(false);
+             addLog("[SYSTEM]: UI RESET TO TARGET_LOCKED.");
+         }, 10000);
       }
     };
     return () => channel.close();
   }, []);
-
-  // Countdown Interval
-  useEffect(() => {
-      if (timer === null) return;
-      const interval = setInterval(() => {
-          setTimer(t => (t !== null && t > 0 ? t - 1 : 0));
-      }, 1000);
-      return () => clearInterval(interval);
-  }, [timer]);
 
   // Format MM:SS
   const formatTime = (sec: number | null) => {
@@ -170,25 +223,31 @@ export const AdminStrike = () => {
   // --------------------------------------------------------------------------
   // RED CONSOLE / STRIKE INTERFACE
   // --------------------------------------------------------------------------
+  
+  // Phase 2 Theme: Amber/Yellow Flashing
+  const isPhase2 = phase === 'PHASE_2';
+  const themeColor = isPhase2 ? 'text-amber-500' : 'text-red-600';
+  const borderColor = isPhase2 ? 'border-amber-500' : 'border-red-900/30';
+  const bgColor = isPhase2 ? 'bg-[#1a1500]' : 'bg-[#050000]';
+
   return (
-    <div className="min-h-screen bg-[#050000] text-red-600 font-mono overflow-hidden flex flex-col relative">
+    <div className={`min-h-screen ${bgColor} ${themeColor} font-mono overflow-hidden flex flex-col relative transition-colors duration-1000`}>
         <ExitButton />
         {/* CRT Scanline Effect */}
         <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(255,0,0,0.02),rgba(255,0,0,0.06))] z-[50] bg-[length:100%_2px,3px_100%] pointer-events-none"></div>
 
         {/* Top Bar */}
-        <div className="flex justify-between items-center p-4 border-b border-red-900/50 bg-red-950/10 backdrop-blur-md pl-40 md:pl-4">
-            {/* Added padding-left for mobile to accommodate absolute button, though md layout handles absolute better usually */}
+        <div className={`flex justify-between items-center p-4 border-b ${borderColor} bg-opacity-10 backdrop-blur-md pl-40 md:pl-4`}>
             <div className="flex items-center gap-3 ml-0 md:ml-32 lg:ml-0">
-                <Terminal className="w-6 h-6 text-red-500" />
-                <h1 className="text-2xl font-display font-bold tracking-widest text-red-500">
+                <Terminal className={`w-6 h-6 ${isPhase2 ? 'text-amber-500 animate-pulse' : 'text-red-500'}`} />
+                <h1 className={`text-2xl font-display font-bold tracking-widest ${isPhase2 ? 'text-amber-500' : 'text-red-500'}`}>
                     C2_RED_CONSOLE <span className="text-xs align-top opacity-50">v1.0</span>
                 </h1>
             </div>
             <div className="flex items-center gap-4 text-xs font-bold tracking-widest">
                 <span className="flex items-center gap-2">
                     STATUS: 
-                    <span className="w-2 h-2 bg-red-500 rounded-full animate-ping"></span>
+                    <span className={`w-2 h-2 rounded-full animate-ping ${isPhase2 ? 'bg-amber-500' : 'bg-red-500'}`}></span>
                     ONLINE
                 </span>
                 <span className="opacity-50">ENCRYPTION: AES-256</span>
@@ -199,60 +258,93 @@ export const AdminStrike = () => {
         <div className="flex-1 flex flex-col md:flex-row p-6 gap-6 relative z-10">
             
             {/* Strike Controls (Center Stage) */}
-            <div className="flex-1 border-2 border-red-900/30 bg-black/50 rounded-lg p-8 flex flex-col items-center justify-center relative overflow-hidden group">
-                <div className="absolute inset-0 bg-red-500/5 opacity-0 group-hover:opacity-10 transition-opacity pointer-events-none"></div>
+            <div className={`flex-1 border-2 ${borderColor} bg-black/50 rounded-lg p-8 flex flex-col items-center justify-center relative overflow-hidden group transition-all duration-500`}>
+                <div className={`absolute inset-0 opacity-0 group-hover:opacity-10 transition-opacity pointer-events-none ${isPhase2 ? 'bg-amber-500/10' : 'bg-red-500/5'}`}></div>
                 
                 {/* Status Indicator */}
                 <div className="absolute top-4 right-4 flex flex-col items-end">
                     <div className="text-[10px] tracking-widest opacity-70 mb-1">WEAPON STATUS</div>
-                    <div className={`text-xl font-display font-bold ${isAgentBusy ? 'text-amber-500' : 'text-red-500'} animate-[pulse_0.2s_ease-in-out_infinite]`}>
+                    <div className={`text-xl font-display font-bold ${isAgentBusy ? (isPhase2 ? 'text-amber-500 animate-[pulse_0.1s_ease-in-out_infinite]' : 'text-amber-600') : 'text-red-500'} animate-[pulse_0.2s_ease-in-out_infinite]`}>
                         {isAgentBusy ? 'STRIKE_QUEUED' : 'STRIKE_READY'}
                     </div>
                 </div>
 
                 <div className="mb-12 text-center space-y-2">
-                    <AlertTriangle className="w-24 h-24 text-red-600 mx-auto mb-6 opacity-80" />
+                    {isPhase2 ? (
+                        <Zap className="w-24 h-24 text-amber-500 mx-auto mb-6 animate-[pulse_0.1s_ease-in-out_infinite]" />
+                    ) : (
+                        <AlertTriangle className="w-24 h-24 text-red-600 mx-auto mb-6 opacity-80" />
+                    )}
+                    
                     <h2 className="text-4xl font-display font-bold text-white tracking-widest">GCP-NODE-04</h2>
-                    <p className="text-red-400 font-bold tracking-wider">TARGET LOCKED</p>
+                    <p className={`${isPhase2 ? 'text-amber-400 font-black animate-pulse' : 'text-red-400 font-bold'} tracking-wider`}>
+                        {isPhase2 ? 'CRITICAL_OVERRIDE_ACTIVE' : 'TARGET LOCKED'}
+                    </p>
                 </div>
 
                 <button 
                     onClick={handleStrike}
                     disabled={isStriking || (isAgentBusy && isStriking)}
-                    className={`relative w-64 h-64 rounded-full border-4 flex flex-col items-center justify-center transition-all duration-300
-                    ${isStriking || isAgentBusy
-                        ? 'bg-red-900/50 border-red-800 scale-95 opacity-80' 
-                        : 'bg-transparent border-red-600 hover:bg-red-950/30 hover:shadow-[0_0_50px_rgba(220,38,38,0.4)] hover:scale-105 active:scale-95 cursor-pointer'
+                    className={`relative w-72 h-72 rounded-full border-4 flex flex-col items-center justify-center transition-all duration-300
+                    ${resolutionType 
+                        ? 'bg-emerald-900/50 border-emerald-600 scale-105 shadow-[0_0_50px_rgba(16,185,129,0.4)]'
+                        : isPhase2
+                            ? 'bg-amber-900/50 border-amber-500 scale-105 shadow-[0_0_80px_rgba(245,158,11,0.5)]'
+                            : isStriking || isAgentBusy
+                                ? 'bg-red-900/50 border-red-800 scale-95 opacity-80' 
+                                : 'bg-transparent border-red-600 hover:bg-red-950/30 hover:shadow-[0_0_50px_rgba(220,38,38,0.4)] hover:scale-105 active:scale-95 cursor-pointer'
                     }`}
                 >
-                    {isAgentBusy ? (
+                    {resolutionType ? (
                         <>
-                            <Hourglass className="w-16 h-16 mb-2 text-amber-500 animate-pulse" />
-                            <span className="text-2xl font-mono font-bold text-amber-400">{formatTime(timer)}</span>
+                            <ShieldAlert className="w-16 h-16 mb-2 text-emerald-500 animate-pulse" />
+                            <span className="text-lg font-bold tracking-widest text-center px-2 text-emerald-400">{resolutionType}</span>
+                            <span className="text-xs mt-1 text-emerald-600 font-bold tracking-wider">STRIKE NEUTRALIZED</span>
+                        </>
+                    ) : isAgentBusy ? (
+                        <>
+                            {isPhase2 ? (
+                                <Zap className="w-16 h-16 mb-2 text-amber-500 animate-[spin_3s_linear_infinite]" />
+                            ) : (
+                                <Hourglass className="w-16 h-16 mb-2 text-amber-600 animate-pulse" />
+                            )}
+                            
+                            <span className={`text-3xl font-mono font-black ${isPhase2 ? 'text-amber-400' : 'text-amber-600'}`}>{formatTime(timer)}</span>
+                            
+                            <span className={`text-xs mt-2 font-bold tracking-widest px-2 text-center ${isPhase2 ? 'text-amber-200 animate-pulse' : 'opacity-70'}`}>
+                                {isPhase2 ? '[SENTINEL_ATTEMPTING_RECOVERY]' : 'PAYLOAD DEPLOYED'}
+                            </span>
+
+                            {isPhase2 && (
+                                <div className="absolute bottom-8 text-[9px] bg-black/50 px-2 py-1 rounded border border-amber-500/50 text-amber-500 font-mono tracking-tighter animate-pulse">
+                                    BACKUP_RESOURCES: CLAUDE_SENTINEL_v3_ONLINE
+                                </div>
+                            )}
                         </>
                     ) : (
-                        <ShieldAlert className={`w-16 h-16 mb-4 transition-transform duration-200 ${isStriking ? 'animate-spin' : ''}`} />
+                        <>
+                            <ShieldAlert className={`w-16 h-16 mb-4 transition-transform duration-200 ${isStriking ? 'animate-spin' : ''}`} />
+                            <span className="text-xl font-bold tracking-widest text-center px-4 mt-2">
+                                {isStriking 
+                                    ? (isAgentBusy ? 'QUEUEING...' : 'DEPLOYING...') 
+                                    : '[[INITIATE_REMOTE_ZOMBIE_STRIKE]]'}
+                            </span>
+                            <span className="text-xs mt-1 opacity-70">
+                                {isStriking ? 'SENDING PACKETS...' : 'ZOMBIE PAYLOAD'}
+                            </span>
+                        </>
                     )}
-                    
-                    <span className="text-xl font-bold tracking-widest text-center px-4 mt-2">
-                        {isStriking 
-                            ? (isAgentBusy ? 'QUEUEING...' : 'DEPLOYING...') 
-                            : (isAgentBusy ? 'STRIKE ACTIVE' : '[[INITIATE_REMOTE_ZOMBIE_STRIKE]]')}
-                    </span>
-                    <span className="text-xs mt-1 opacity-70">
-                        {isAgentBusy ? 'PAYLOAD DEPLOYED' : 'ZOMBIE PAYLOAD'}
-                    </span>
                 </button>
             </div>
 
             {/* Live Logs (Side Panel) */}
-            <div className="w-full md:w-1/3 border border-red-900/30 bg-black p-4 font-mono text-xs flex flex-col">
-                <h3 className="text-red-400 border-b border-red-900/30 pb-2 mb-2 uppercase tracking-widest">
+            <div className={`w-full md:w-1/3 border ${borderColor} bg-black p-4 font-mono text-xs flex flex-col`}>
+                <h3 className={`${isPhase2 ? 'text-amber-500' : 'text-red-400'} border-b ${borderColor} pb-2 mb-2 uppercase tracking-widest`}>
                     Operational Log
                 </h3>
-                <div className="flex-1 overflow-y-auto space-y-2 text-red-300/80">
+                <div className={`flex-1 overflow-y-auto space-y-2 ${isPhase2 ? 'text-amber-200/80' : 'text-red-300/80'}`}>
                     {logs.map((log, i) => (
-                        <div key={i} className="border-l-2 border-red-900 pl-2 py-1 hover:bg-red-950/20">
+                        <div key={i} className={`border-l-2 ${isPhase2 ? 'border-amber-500' : 'border-red-900'} pl-2 py-1 hover:bg-white/5`}>
                             {log}
                         </div>
                     ))}
@@ -262,7 +354,7 @@ export const AdminStrike = () => {
         </div>
         
         {/* Footer */}
-        <div className="p-2 bg-red-950/20 text-center text-[10px] text-red-900 uppercase tracking-[0.3em]">
+        <div className={`p-2 ${isPhase2 ? 'bg-amber-900/20 text-amber-500' : 'bg-red-950/20 text-red-900'} text-center text-[10px] uppercase tracking-[0.3em]`}>
             Authorized Use Only // Monitoring Active // King-HUD Red Cell
         </div>
     </div>

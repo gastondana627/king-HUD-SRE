@@ -7,7 +7,7 @@ import { TelemetryPoint, DiagnosticResult, SystemStatus } from '../types';
 import { analyzeSystemState } from '../services/geminiService';
 import { sendNtfyAlert, broadcastCriticalAlert, sendEmailAlert, broadcastFailSafeAlert } from '../services/notificationService';
 import { executeInstanceReset } from '../services/cloudService';
-import { startAuditScheduler, logAuditEntry, invoke_ai_analysis, getShiftReports, isAuditorOnline, checkAndSendDailySummary, getCurrentShift, downloadAuditLog, resetUplinkConnection, broadcastStrikeClear, getStrikeMetrics } from '../services/auditService';
+import { startAuditScheduler, logAuditEntry, invoke_ai_analysis, getShiftReports, isAuditorOnline, checkAndSendDailySummary, getCurrentShift, downloadAuditLog, resetUplinkConnection, broadcastStrikeClear, getStrikeMetrics, exportAuditLog } from '../services/auditService';
 import { 
   SIMULATION_INTERVAL_MS, 
   MAX_HISTORY_POINTS, 
@@ -19,7 +19,7 @@ import {
   INITIAL_HOLD_TIME,
   FAILSAFE_GRACE_TIME
 } from '../constants';
-import { Play, Pause, AlertOctagon, RotateCcw, Zap, RefreshCw, ServerCrash, FileText, X, Cpu, Download, Database, Layers, ArrowLeft } from 'lucide-react';
+import { Play, Pause, AlertOctagon, RotateCcw, Zap, RefreshCw, ServerCrash, FileText, X, Cpu, Download, Database, Layers, ArrowLeft, ChevronDown } from 'lucide-react';
 import { TrafficContext } from '../App';
 
 export const Dashboard = () => {
@@ -62,6 +62,9 @@ export const Dashboard = () => {
   const [remediationPhase, setRemediationPhase] = useState<'HOLD' | 'FAILSAFE'>('HOLD');
   // TTR STOPWATCH: Measures time from DETECTION (Fracture Confirmed) to COMMIT (Reset)
   const remediationStartTimeRef = useRef<number>(0);
+  
+  // Export Menu State
+  const [showExportMenu, setShowExportMenu] = useState(false);
   
   // Visual Actuation State
   const [isAutonomousActuating, setIsAutonomousActuating] = useState(false);
@@ -291,15 +294,15 @@ export const Dashboard = () => {
         return r.shift === currentShift || (r.content && r.content.includes(shiftIdentifier));
     });
 
-  // Forensic Timer & Fail-Safe Logic
+  // Forensic Timer & Fail-Safe Logic (Lag-Proof)
   useEffect(() => {
       if (remediationTimer === null) return;
       
+      // LOGIC CHECK PHASE
       if (remediationTimer === 0) {
           // PHASE 1: FORENSIC HOLD EXPIRED -> ENTER FAILSAFE
           if (remediationPhase === 'HOLD') {
               // FAIL-SAFE CONDITION: Only proceed if system is still compromised
-              // If system has spontaneously recovered (unlikely for Zombie, but possible for false positive), cancel.
               if (systemStatus === SystemStatus.NOMINAL) {
                   logsRef.current = [...logsRef.current, "[INFO]: SYSTEM_RECOVERED_DURING_HOLD. CANCELLING_FAILSAFE."];
                   setRemediationTimer(null);
@@ -308,9 +311,15 @@ export const Dashboard = () => {
                   return;
               }
 
+              // CALCULATE CORRECT REMAINING TIME FOR FAILSAFE (Avoid Reset to Full 120s if Lagged)
+              const now = Date.now();
+              const elapsed = now - remediationStartTimeRef.current;
+              const totalDurationMs = (INITIAL_HOLD_TIME + FAILSAFE_GRACE_TIME) * 1000;
+              const remaining = Math.max(0, Math.ceil((totalDurationMs - elapsed) / 1000));
+
               setRemediationPhase('FAILSAFE');
-              setRemediationTimer(FAILSAFE_GRACE_TIME); // 120s Grace Period
-              logsRef.current = [...logsRef.current, "[WARNING]: FORENSIC_WINDOW_CLOSED. OPERATOR_INACTIVITY_DETECTED. EXTENDING_GRACE_PERIOD_120S."];
+              setRemediationTimer(remaining);
+              logsRef.current = [...logsRef.current, "[WARNING]: FORENSIC_WINDOW_CLOSED. OPERATOR_INACTIVITY_DETECTED. EXTENDING_GRACE_PERIOD."];
               return;
           }
           
@@ -334,9 +343,23 @@ export const Dashboard = () => {
           }
       }
       
+      // TIMER TICK PHASE (Timestamp-based Sync)
       const timer = setInterval(() => {
-          setRemediationTimer(t => (t !== null && t > 0 ? t - 1 : 0));
+          const now = Date.now();
+          const elapsed = now - remediationStartTimeRef.current;
+          const holdMs = INITIAL_HOLD_TIME * 1000;
+          const totalMs = (INITIAL_HOLD_TIME + FAILSAFE_GRACE_TIME) * 1000;
+          
+          let nextTime = 0;
+          if (remediationPhase === 'HOLD') {
+              nextTime = Math.max(0, Math.ceil((holdMs - elapsed) / 1000));
+          } else {
+              nextTime = Math.max(0, Math.ceil((totalMs - elapsed) / 1000));
+          }
+          
+          setRemediationTimer(nextTime);
       }, 1000);
+
       return () => clearInterval(timer);
   }, [remediationTimer, history, remediationPhase, systemStatus]);
 
@@ -519,8 +542,8 @@ export const Dashboard = () => {
       
       if (resetSuccess) {
           lastResetTimeRef.current = Date.now();
-          // GLOBAL SYNC: Clear Strike on Red Console
-          broadcastStrikeClear();
+          // GLOBAL SYNC: Clear Strike on Red Console with Source Attribution
+          broadcastStrikeClear(source);
           
           logsRef.current = [...logsRef.current, `[SYSTEM]: RECOVERY_COMPLETE. SOURCE: ${source}. TTR: ${totalTtrSec}s`];
           setCommandStatus(null);
@@ -1034,14 +1057,72 @@ export const Dashboard = () => {
                             {showFullArchive ? 'HIDE_ARCHIVE' : 'SHOW_FULL_ARCHIVE'}
                         </button>
 
-                         {/* DATA SHOVEL: CSV DOWNLOAD */}
-                        <button 
-                            onClick={downloadAuditLog}
-                            className="flex items-center gap-1 text-[10px] font-mono border px-2 py-1 rounded transition-all bg-black border-gray-600 text-gray-400 hover:text-emerald-400 hover:border-emerald-500"
-                        >
-                            <Download className="w-3 h-3" />
-                            DOWNLOAD_CSV
-                        </button>
+                         {/* DATA SHOVEL: MULTI-SHIFT EXPORT MENU */}
+                        <div className="relative">
+                            <button 
+                                onClick={() => setShowExportMenu(!showExportMenu)}
+                                className="flex items-center gap-1 text-[10px] font-mono border px-2 py-1 rounded transition-all bg-black border-gray-600 text-gray-400 hover:text-emerald-400 hover:border-emerald-500"
+                            >
+                                <Download className="w-3 h-3" />
+                                EXPORT_CSV
+                                <ChevronDown className="w-3 h-3" />
+                            </button>
+                            
+                            {showExportMenu && (
+                                <div className="absolute top-full right-0 mt-1 w-48 bg-gray-900 border border-gray-600 shadow-xl z-50 rounded overflow-hidden">
+                                    <div className="text-[9px] bg-gray-950 p-1 text-gray-500 text-center border-b border-gray-800">
+                                        PERMISSION: {currentShift}
+                                    </div>
+                                    
+                                    {/* 1ST SHIFT - ALWAYS VISIBLE */}
+                                    <button 
+                                        onClick={() => { exportAuditLog([1], 'shift_1_audit'); setShowExportMenu(false); }}
+                                        className="w-full text-left px-3 py-2 text-[10px] text-gray-300 hover:bg-gray-800 hover:text-emerald-400 border-b border-gray-800"
+                                    >
+                                        EXPORT SHIFT 1 (09:00-17:00)
+                                    </button>
+
+                                    {/* 2ND SHIFT + */}
+                                    {(currentShift === '2ND_SHIFT' || currentShift === '3RD_SHIFT') && (
+                                        <>
+                                            <button 
+                                                onClick={() => { exportAuditLog([2], 'shift_2_audit'); setShowExportMenu(false); }}
+                                                className="w-full text-left px-3 py-2 text-[10px] text-gray-300 hover:bg-gray-800 hover:text-emerald-400 border-b border-gray-800"
+                                            >
+                                                EXPORT SHIFT 2 (17:00-01:00)
+                                            </button>
+                                            
+                                            {currentShift === '2ND_SHIFT' && (
+                                                <button 
+                                                    onClick={() => { exportAuditLog([1, 2], 'combined_shifts_1_2'); setShowExportMenu(false); }}
+                                                    className="w-full text-left px-3 py-2 text-[10px] text-amber-400 hover:bg-gray-800 hover:text-amber-300 border-b border-gray-800"
+                                                >
+                                                    EXPORT COMBINED (1+2)
+                                                </button>
+                                            )}
+                                        </>
+                                    )}
+
+                                    {/* 3RD SHIFT ONLY */}
+                                    {currentShift === '3RD_SHIFT' && (
+                                        <>
+                                            <button 
+                                                onClick={() => { exportAuditLog([3], 'shift_3_audit'); setShowExportMenu(false); }}
+                                                className="w-full text-left px-3 py-2 text-[10px] text-gray-300 hover:bg-gray-800 hover:text-emerald-400 border-b border-gray-800"
+                                            >
+                                                EXPORT SHIFT 3 (01:00-09:00)
+                                            </button>
+                                            <button 
+                                                onClick={() => { exportAuditLog([], 'master_eod_audit'); setShowExportMenu(false); }}
+                                                className="w-full text-left px-3 py-2 text-[10px] bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/40 font-bold"
+                                            >
+                                                FINAL EOD MASTER EXPORT
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                            )}
+                        </div>
 
                         <button 
                             onClick={handleDebugUplink}
