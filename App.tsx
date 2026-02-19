@@ -1,23 +1,80 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState, useRef, createContext } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Dashboard } from './components/Dashboard';
 import { AdminStrike } from './components/AdminStrike';
 import { RemediationHandler } from './components/RemediationHandler';
+import { triggerZombieStrike } from './services/auditService';
+
+export const TrafficContext = createContext({
+  isAgentBusy: false,
+  setBusy: (busy: boolean) => {},
+  triggerStrike: (source?: string) => {},
+  queueDepth: 0,
+  registerLogger: (logger: (msg: string) => void) => {}
+});
 
 export const App = () => {
+  const [isAgentBusy, setIsAgentBusy] = useState(false);
+  const [queue, setQueue] = useState<{time: number, source: string}[]>([]);
+  const loggerRef = useRef<((msg: string) => void) | null>(null);
+
   useEffect(() => {
     console.log("KING-HUD_UI: RENDER_SUCCESSFUL [SYSTEM_REFRESH_COMPLETE]");
   }, []);
 
+  const registerLogger = (fn: (msg: string) => void) => {
+    loggerRef.current = fn;
+  };
+
+  const triggerStrike = (source: string = "UNKNOWN") => {
+    if (isAgentBusy) {
+        const msg = `[TRAFFIC_CONTROL]: AGENT_OCCUPIED. QUEUEING_STRIKE_SEQUENTIALLY... (Source: ${source})`;
+        console.log(msg);
+        if (loggerRef.current) loggerRef.current(msg);
+        setQueue(prev => [...prev, { time: Date.now(), source }]);
+    } else {
+        triggerZombieStrike(0, source);
+        setIsAgentBusy(true);
+    }
+  };
+
+  // Traffic Controller Logic
+  useEffect(() => {
+    if (!isAgentBusy && queue.length > 0) {
+       const nextItem = queue[0];
+       const remainingQueue = queue.slice(1);
+       const now = Date.now();
+       const delayMs = now - nextItem.time;
+       const delaySec = Math.floor(delayMs / 1000);
+
+       if (loggerRef.current) loggerRef.current(`[TRAFFIC_CONTROL]: AGENT_FREE. EXECUTING_QUEUED_STRIKE (Waited ${delaySec}s). Launching in 10s...`);
+
+       const timer = setTimeout(() => {
+           setQueue(remainingQueue);
+           triggerZombieStrike(delaySec, nextItem.source);
+           // NOTE: Dashboard will detect the strike start via BroadcastChannel or state update and setBusy(true) accordingly.
+       }, 10000);
+
+       return () => clearTimeout(timer);
+    }
+  }, [isAgentBusy, queue]);
+
   return (
-    <HashRouter>
-      <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/admin/strike" element={<AdminStrike />} />
-        <Route path="/remediate" element={<RemediationHandler />} />
-        {/* Catch-all route to ensure Dashboard renders on any unknown path */}
-        <Route path="*" element={<Dashboard />} />
-      </Routes>
-    </HashRouter>
+    <TrafficContext.Provider value={{ 
+        isAgentBusy, 
+        setBusy: setIsAgentBusy, 
+        triggerStrike, 
+        queueDepth: queue.length,
+        registerLogger
+    }}>
+      <HashRouter>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/admin/strike" element={<AdminStrike />} />
+          <Route path="/remediate" element={<RemediationHandler />} />
+          <Route path="*" element={<Dashboard />} />
+        </Routes>
+      </HashRouter>
+    </TrafficContext.Provider>
   );
 };

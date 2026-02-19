@@ -1,4 +1,4 @@
-import React, { ReactNode } from 'react';
+import React, { ReactNode, useState, useEffect } from 'react';
 import { SystemStatus } from '../types';
 
 interface HUDLayoutProps {
@@ -10,6 +10,8 @@ interface HUDLayoutProps {
 }
 
 export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediationTimer, shiftRemediationCount = 0, isStalled = false }) => {
+  const [nextWaveTimer, setNextWaveTimer] = useState("00:00:00");
+
   const isCritical = status === 'CRITICAL' || status === 'ZOMBIE_KERNEL';
   const isFracture = status === SystemStatus.C2_FRACTURE_DETECTED;
   const isUplinkFail = status === SystemStatus.UPLINK_FAILURE;
@@ -49,6 +51,36 @@ export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediat
     glowColor = 'shadow-[0_0_15px_#FFD700] animate-pulse';
   }
 
+  // Shift Timer Logic
+  useEffect(() => {
+    const interval = setInterval(() => {
+        const now = new Date();
+        const options: Intl.DateTimeFormatOptions = { timeZone: "America/Chicago", hour12: false };
+        const h = parseInt(now.toLocaleString("en-US", { ...options, hour: "numeric" }));
+        const m = parseInt(now.toLocaleString("en-US", { ...options, minute: "numeric" }));
+        const s = parseInt(now.toLocaleString("en-US", { ...options, second: "numeric" }));
+
+        // Shift Targets: 01:00, 09:00, 17:00
+        const targets = [1, 9, 17];
+        let nextH = targets.find(t => t > h);
+        if (nextH === undefined) {
+            // Wrap to next day first target
+            nextH = targets[0] + 24;
+        }
+
+        const nowSec = h * 3600 + m * 60 + s;
+        const targetSec = nextH * 3600;
+        const diffSec = targetSec - nowSec;
+
+        const hours = Math.floor(diffSec / 3600);
+        const mins = Math.floor((diffSec % 3600) / 60);
+        const secs = diffSec % 60;
+
+        setNextWaveTimer(`${hours.toString().padStart(2,'0')}:${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Timer Formatting
   const formatTime = (sec: number) => {
     const m = Math.floor(sec / 60).toString().padStart(2, '0');
@@ -85,6 +117,10 @@ export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediat
 
           <div className="flex items-center gap-6 text-xs text-hud-primary uppercase tracking-wider">
             <span>SYS_ID: G-4491-X</span>
+            
+            <span className="text-hud-muted">
+                NEXT_WAVE: <span className="text-hud-text font-mono">{nextWaveTimer}</span>
+            </span>
 
             {/* STRIKE COUNTER */}
             <span className="text-hud-text hidden sm:inline-block">

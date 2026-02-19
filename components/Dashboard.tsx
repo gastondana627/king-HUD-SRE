@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, useContext } from 'react';
 import { HUDLayout } from './HUDLayout';
 import { TelemetryPanel } from './TelemetryPanel';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
@@ -17,13 +17,18 @@ import {
   GCP_CONFIG,
   REBOOT_COOLDOWN_MS
 } from '../constants';
-import { Play, Pause, AlertOctagon, RotateCcw, Zap, RefreshCw, ServerCrash, FileText, X, Cpu, Download, Database } from 'lucide-react';
+import { Play, Pause, AlertOctagon, RotateCcw, Zap, RefreshCw, ServerCrash, FileText, X, Cpu, Download, Database, Layers } from 'lucide-react';
+import { TrafficContext } from '../App';
 
 export const Dashboard = () => {
+  // Context
+  const { isAgentBusy, setBusy, triggerStrike, queueDepth, registerLogger } = useContext(TrafficContext);
+
   // State
   const [history, setHistory] = useState<TelemetryPoint[]>([]);
   const [isPlaying, setIsPlaying] = useState(true);
   const [simulationMode, setSimulationMode] = useState<'NOMINAL' | 'ZOMBIE' | 'CPU_STRIKE'>('NOMINAL');
+  const [simulationSource, setSimulationSource] = useState<string>('UNKNOWN');
   const [diagnosticResult, setDiagnosticResult] = useState<DiagnosticResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>(SystemStatus.NOMINAL);
@@ -43,6 +48,12 @@ export const Dashboard = () => {
   // TTR STOPWATCH: Measures time from DETECTION (Fracture Confirmed) to COMMIT (Reset)
   const remediationStartTimeRef = useRef<number>(0);
   
+  // Visual Actuation State
+  const [isAutonomousActuating, setIsAutonomousActuating] = useState(false);
+  const [shockwaveActive, setShockwaveActive] = useState(false);
+  const [shockwavePos, setShockwavePos] = useState({ x: 0, y: 0 });
+  const remediationButtonRef = useRef<HTMLButtonElement>(null);
+
   const lastAlertSuccessRef = useRef<boolean>(false);
   const lastGeminiMatchRef = useRef<boolean>(false); // Store match result
 
@@ -60,6 +71,47 @@ export const Dashboard = () => {
   // Hiccup Detection Refs
   const stallTickCountRef = useRef<number>(0);
   const lastRamRef = useRef<number>(0);
+
+  // Register Log Pusher
+  useEffect(() => {
+    registerLogger((msg: string) => {
+      logsRef.current = [...logsRef.current, msg];
+    });
+  }, [registerLogger]);
+
+  // Sync Busy State with Traffic Controller
+  useEffect(() => {
+    const busy = simulationMode !== 'NOMINAL' || isAnalyzing;
+    if (busy !== isAgentBusy) {
+        setBusy(busy);
+    }
+  }, [simulationMode, isAnalyzing, setBusy, isAgentBusy]);
+
+  // Sync State to Refs for Stale Closures
+  const currentShiftRef = useRef(currentShift);
+  useEffect(() => { currentShiftRef.current = currentShift; }, [currentShift]);
+  
+  const simulationModeRef = useRef(simulationMode);
+  useEffect(() => { simulationModeRef.current = simulationMode; }, [simulationMode]);
+  
+  const simulationSourceRef = useRef(simulationSource);
+  useEffect(() => { simulationSourceRef.current = simulationSource; }, [simulationSource]);
+
+  const diagnosticResultRef = useRef(diagnosticResult);
+  useEffect(() => { diagnosticResultRef.current = diagnosticResult; }, [diagnosticResult]);
+
+  const remediationTimerRef = useRef(remediationTimer);
+  useEffect(() => { remediationTimerRef.current = remediationTimer; }, [remediationTimer]);
+
+  // Determine Shift-Specific Visuals
+  const shiftColors = useMemo(() => {
+    switch(currentShift) {
+        case '1ST_SHIFT': return { hex: '#00FF41', rgb: '0, 255, 65' };   // Emerald (Observation)
+        case '2ND_SHIFT': return { hex: '#FFB000', rgb: '255, 176, 0' };  // Amber (Tactical)
+        case '3RD_SHIFT': return { hex: '#00f3ff', rgb: '0, 243, 255' };  // Cyan (Autonomous)
+        default: return { hex: '#00f3ff', rgb: '0, 243, 255' };
+    }
+  }, [currentShift]);
 
   // System Init Log
   useEffect(() => {
@@ -82,16 +134,16 @@ export const Dashboard = () => {
 
   // Initialize Audit Scheduler & Daily Check
   useEffect(() => {
-    const stopScheduler = startAuditScheduler(() => {
-      console.log("[AUDIT]: Triggering Scheduled Zombie Wave");
-      setSimulationMode('ZOMBIE');
+    const stopScheduler = startAuditScheduler((source) => {
+      console.log(`[AUDIT]: Triggering Scheduled Zombie Wave (Source: ${source})`);
+      triggerStrike(source);
     });
     
     // Check for Daily Summary on load
     checkAndSendDailySummary();
 
     return () => stopScheduler();
-  }, []);
+  }, [triggerStrike]);
 
   // Shift Handover Synchronization & Rotation Logic
   useEffect(() => {
@@ -115,7 +167,7 @@ export const Dashboard = () => {
     // @ts-ignore
     window.triggerZombieStrike = () => {
        console.log("[C2_ADMIN_HOOK]: Remote Signal Received on /admin/strike. Initiating Zombie Protocol.");
-       setSimulationMode('ZOMBIE');
+       triggerStrike("WINDOW_HOOK");
     };
     
     // Cleanup
@@ -123,7 +175,7 @@ export const Dashboard = () => {
         // @ts-ignore
         delete window.triggerZombieStrike;
     }
-  }, []);
+  }, [triggerStrike]);
 
   // Listen for C2 Admin Strike via BroadcastChannel
   useEffect(() => {
@@ -132,6 +184,10 @@ export const Dashboard = () => {
       if (event.data.type === 'TRIGGER_ZOMBIE') {
          console.log("[C2_ADMIN_HOOK]: Remote Broadcast Received. Initiating Zombie Protocol.");
          setSimulationMode('ZOMBIE');
+         if (event.data.source) {
+             setSimulationSource(event.data.source);
+             logsRef.current = [...logsRef.current, `[ALERT]: SIGNAL_SOURCE_IDENTIFIED: ${event.data.source}`];
+         }
          logsRef.current = [...logsRef.current, "[ALERT]: REMOTE_C2_COMMAND_RECEIVED. SYSTEM_COMPROMISED."];
       }
     };
@@ -161,6 +217,15 @@ export const Dashboard = () => {
       
       if (remediationTimer === 0) {
           // Timer Expired: Auto-Heal (Sentinel)
+          
+          // CRITICAL: Execute GitLab Actuation via Bridge
+          const cmd = diagnosticResultRef.current?.interventions?.[0]?.cliCommand || "gcloud compute instances reset --all";
+          
+          // Log the automated decision
+          logsRef.current = [...logsRef.current, `[SENTINEL]: FORENSIC_HOLD_EXPIRED. EXECUTING_AUTONOMOUS_RESPONSE: ${cmd}`];
+          
+          triggerGitLabActuation(cmd);
+
           executeFinalRemediation(history[history.length-1], false, 180000); // TTR = 180s
           return;
       }
@@ -196,6 +261,7 @@ export const Dashboard = () => {
   const triggerPlannedStrike = (durationSeconds = 30) => {
     console.log(`[RED TEAM] Initiating CPU Strike for ${durationSeconds}s`);
     setSimulationMode('CPU_STRIKE');
+    setSimulationSource('RED_TEAM_MANUAL'); // Tag as manual red team
     setSystemStatus(SystemStatus.WARNING); // Warning, not Critical (it's a test)
     
     // Inject Test Mode Logs immediately
@@ -206,6 +272,7 @@ export const Dashboard = () => {
     strikeTimeoutRef.current = window.setTimeout(() => {
       console.log("[RED TEAM] Strike Timeout. Reverting to Nominal.");
       setSimulationMode('NOMINAL');
+      setSimulationSource('UNKNOWN');
       setSystemStatus(SystemStatus.NOMINAL);
       consecutiveZombieTicksRef.current = 0; // Reset counters
       isFractureActiveRef.current = false;
@@ -258,8 +325,30 @@ export const Dashboard = () => {
       }
   };
 
+  // GitLab Actuation Bridge (Moved up for scope visibility)
+  const triggerGitLabActuation = async (command: string) => {
+    logsRef.current = [...logsRef.current, `[ACTION] Initiating GitLab Agent Actuation: ${command}`];
+    try {
+      const response = await fetch('https://gitlab.com/api/v4/projects/YOUR_PROJECT_ID/trigger/pipeline', {
+        method: 'POST',
+        body: JSON.stringify({
+          token: 'YOUR_TRIGGER_TOKEN',
+          ref: 'main',
+          variables: { "REMEDIATION_CMD": command }
+        }),
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      if (response.ok) {
+        logsRef.current = [...logsRef.current, `[SUCCESS] Actuation Signal Received by GitLab Agent. Running remediation...`];
+      }
+    } catch (error: any) {
+      logsRef.current = [...logsRef.current, `[ERROR] Actuation Link Severed: ${error.message}`];
+    }
+  };
+
   // Final Execution of Remediation (Post-Delay or Manual)
-  const executeFinalRemediation = async (point: TelemetryPoint, isManual: boolean, ttrMs: number) => {
+  const executeFinalRemediation = async (point: TelemetryPoint, isManual: boolean, ttrMs: number, customSource?: string) => {
       setRemediationTimer(null); // Stop timer
       setCommandStatus(`[CMD]: gcloud compute instances reset ${GCP_CONFIG.INSTANCE_ID} --zone ${GCP_CONFIG.ZONE} ... EXECUTING`);
       
@@ -276,17 +365,21 @@ export const Dashboard = () => {
       const stallDetectedDuringEvent = isStalled;
 
       // UPGRADE: Adversarial Traceability
-      const source = isManual 
+      let source = isManual 
         ? "DASHBOARD_CONSOLE" 
         : "AUTO_SENTINEL // DRILL_FAILED_HUMAN_OOB_TIMEOUT";
+      
+      if (customSource) {
+          source = customSource;
+      }
       
       // Use the stored alert success status if we are in auto mode flow
       const alertSuccess = isManual ? lastAlertSuccessRef.current : true;
       const geminiMatch = lastGeminiMatchRef.current;
 
       // Log to CSV - Triggers 3rd Shift Auditor
-      // UPGRADE: Pass geminiMatch, Source, Shift Count, and Stall Status
-      logAuditEntry(point, alertSuccess, resetSuccess, source, geminiMatch, ttrSec, remediationStartTimeRef.current, newCount, stallDetectedDuringEvent);
+      // UPGRADE: Pass geminiMatch, Source, Shift Count, and Stall Status, and Queue Delay (default 0 for final remediation)
+      logAuditEntry(point, alertSuccess, resetSuccess, source, geminiMatch, ttrSec, remediationStartTimeRef.current, newCount, stallDetectedDuringEvent, 0);
       
       if (resetSuccess) {
           lastResetTimeRef.current = Date.now();
@@ -294,6 +387,7 @@ export const Dashboard = () => {
           setCommandStatus(null);
           
           setSimulationMode('NOMINAL');
+          setSimulationSource('UNKNOWN');
           setSystemStatus(SystemStatus.NOMINAL);
           consecutiveZombieTicksRef.current = 0;
           isFractureActiveRef.current = false;
@@ -303,6 +397,12 @@ export const Dashboard = () => {
           setIsStalled(false);
           stallTickCountRef.current = 0;
       } else {
+          // If autonomous mode failed, we MUST enforce cooldown to prevent loops
+          if (!isManual) {
+             lastResetTimeRef.current = Date.now();
+             logsRef.current = [...logsRef.current, `[AUTONOMOUS]: REMEDIATION_FAILED. ENFORCING_COOLDOWN_PROTOCOL.`];
+          }
+
           setCommandStatus("[ERROR]: CLOUD_API_FAILURE. RESET ABORTED.");
           logsRef.current = [...logsRef.current, "[CRITICAL]: RESET_FAILED. MANUAL INTERVENTION REQUIRED."];
       }
@@ -317,7 +417,7 @@ export const Dashboard = () => {
     const now = Date.now();
 
     // INTERRUPT LOGIC: If timer is running and user clicks button, this is USER_OOB intervention
-    if (manualTrigger && remediationTimer !== null) {
+    if (manualTrigger && remediationTimerRef.current !== null) {
         logsRef.current = [...logsRef.current, "[CMD]: FORENSIC_HOLD_OVERRIDDEN_BY_USER."];
         executeFinalRemediation(point, true, now - remediationStartTimeRef.current);
         return;
@@ -334,9 +434,9 @@ export const Dashboard = () => {
         // Compute basic match for manual trigger without prior AI analysis
         // Assume FALSE unless diagnostic already exists
         let manualMatch = false;
-        if (diagnosticResult) {
-            manualMatch = (simulationMode === 'ZOMBIE' && diagnosticResult.status === SystemStatus.ZOMBIE_KERNEL) ||
-                          (simulationMode === 'CPU_STRIKE' && diagnosticResult.status === SystemStatus.WARNING);
+        if (diagnosticResultRef.current) {
+            manualMatch = (simulationModeRef.current === 'ZOMBIE' && diagnosticResultRef.current.status === SystemStatus.ZOMBIE_KERNEL) ||
+                          (simulationModeRef.current === 'CPU_STRIKE' && diagnosticResultRef.current.status === SystemStatus.WARNING);
         }
         lastGeminiMatchRef.current = manualMatch;
 
@@ -345,8 +445,27 @@ export const Dashboard = () => {
         executeFinalRemediation(point, true, now - remediationStartTimeRef.current);
         return;
     }
+
+    // HYBRID AUTOMATION: Check if this is a SCHEDULED WAVE
+    // If so, trigger the auto-sentinel IMMEDIATELY (Bypass 180s Timer)
+    if (simulationSourceRef.current === 'AUTO_SCHEDULER') {
+         logsRef.current = [...logsRef.current, `[SENTINEL]: SCHEDULED_AUTOMATION_PROTOCOL_ACTIVE. BYPASSING_HUMAN_GATE.`];
+         
+         // Trigger Visual Loading State
+         setIsAutonomousActuating(true);
+         
+         // Simulate quick processing delay then remediate
+         setTimeout(() => {
+             const cmd = diagnosticResultRef.current?.interventions?.[0]?.cliCommand || "gcloud compute instances reset --all";
+             triggerGitLabActuation(cmd);
+             executeFinalRemediation(point, false, Date.now() - remediationStartTimeRef.current, "AUTO_SENTINEL_SCHEDULED");
+             setIsAutonomousActuating(false);
+         }, 2000);
+         
+         return;
+    }
     
-    // AUTOMATED LOGIC (Heuristic Trigger)
+    // AUTOMATED LOGIC (Standard Heuristic Trigger)
     const timeSinceLastReset = now - lastResetTimeRef.current;
     
     // Safety Governor: Cool-down check
@@ -374,6 +493,7 @@ export const Dashboard = () => {
     
     let forensicHypothesis = "";
     try {
+        // This invokes saveReport() internally to localStorage (KING_HUD_HISTORY)
         const analysis = await invoke_ai_analysis({
             trigger: "HEURISTIC_ZOMBIE_DETECTION",
             timestamp: Date.now(),
@@ -390,13 +510,13 @@ export const Dashboard = () => {
     // In this simulation, we know the Ground Truth (simulationMode).
     // In a real system, this would require post-mortem log parsing.
     let isMatch = false;
-    if (diagnosticResult) {
+    if (diagnosticResultRef.current) {
          // Did the AI identify the Zombie Kernel correctly?
-         if (simulationMode === 'ZOMBIE' && diagnosticResult.status === SystemStatus.ZOMBIE_KERNEL) {
+         if (simulationModeRef.current === 'ZOMBIE' && diagnosticResultRef.current.status === SystemStatus.ZOMBIE_KERNEL) {
              isMatch = true;
          }
          // Did the AI identify the Red Team activity correctly?
-         else if (simulationMode === 'CPU_STRIKE' && (diagnosticResult.status === SystemStatus.WARNING || diagnosticResult.status === SystemStatus.CRITICAL)) {
+         else if (simulationModeRef.current === 'CPU_STRIKE' && (diagnosticResultRef.current.status === SystemStatus.WARNING || diagnosticResultRef.current.status === SystemStatus.CRITICAL)) {
              isMatch = true;
          }
     }
@@ -432,7 +552,42 @@ export const Dashboard = () => {
         logsRef.current = [...logsRef.current, "[UPLINK_WARN]: ALERT_DISPATCH_FAILED. AUTO_REMEDIATION_PENDING."];
     }
 
-    // NOTE: We DO NOT execute reset here. We wait for timer or user interrupt.
+    // 2. AUTONOMOUS OVERRIDE (3RD SHIFT ONLY)
+    if (currentShiftRef.current === '3RD_SHIFT') {
+         logsRef.current = [...logsRef.current, `[AUTONOMOUS]: 3rd Shift Sentinel has bypassed the human gate. Dispatching remediation to GitLab Duo Agent...`];
+         
+         // Trigger Visual Loading State (The Glow)
+         setIsAutonomousActuating(true);
+
+         // Add artificial delay for visual confirmation
+         setTimeout(() => {
+             // Calculate Shockwave Origin
+             if (remediationButtonRef.current) {
+                 const rect = remediationButtonRef.current.getBoundingClientRect();
+                 setShockwavePos({
+                     x: rect.left + rect.width / 2,
+                     y: rect.top + rect.height / 2
+                 });
+             }
+             setShockwaveActive(true);
+
+             // Execute GitLab Actuation via Bridge
+             const cmd = diagnosticResultRef.current?.interventions?.[0]?.cliCommand || "gcloud compute instances reset --all";
+             triggerGitLabActuation(cmd);
+    
+             // Execute Remediation immediately (Bypassing 180s Timer)
+             executeFinalRemediation(point, false, Date.now() - remediationStartTimeRef.current, "AUTO_REMEDIATION_3RD_SHIFT");
+             
+             setIsAutonomousActuating(false);
+             
+             // Cleanup Shockwave
+             setTimeout(() => setShockwaveActive(false), 2000);
+         }, 2000);
+         
+         return;
+    }
+
+    // NOTE: If not 3rd Shift, we wait for timer or user interrupt.
   };
 
   // Simulation Tick
@@ -580,16 +735,31 @@ export const Dashboard = () => {
     try {
       const result = await analyzeSystemState(point, logsRef.current);
       if (isFractureActiveRef.current) {
-         if (systemStatus === SystemStatus.UPLINK_FAILURE || systemStatus === SystemStatus.UPLINK_RECONNECTING || systemStatus === SystemStatus.UPLINK_SIMULATION) {
-           result.status = systemStatus;
+         // Determine Specific Status Message
+         if (simulationSourceRef.current === 'AUTO_SCHEDULER') {
+             result.status = SystemStatus.EXECUTING_SCHEDULED_SENTINEL_PROTOCOL;
+         } else if (simulationSourceRef.current === 'RED_TEAM_MANUAL' || simulationSourceRef.current === 'ADMIN_CONSOLE_MANUAL') {
+             result.status = SystemStatus.EMERGENCY_ADVERSARY_EMULATION_IN_PROGRESS;
+         } else if (systemStatus === SystemStatus.UPLINK_FAILURE || systemStatus === SystemStatus.UPLINK_RECONNECTING || systemStatus === SystemStatus.UPLINK_SIMULATION) {
+             result.status = systemStatus;
          } else {
-           result.status = SystemStatus.C2_FRACTURE_DETECTED;
+             result.status = SystemStatus.C2_FRACTURE_DETECTED;
          }
       }
       setDiagnosticResult(result);
       if (!isFractureActiveRef.current && simulationMode !== 'CPU_STRIKE') {
           setSystemStatus(result.status);
       }
+      
+      // Force update system status based on source for visual compliance
+      if (isFractureActiveRef.current) {
+          if (simulationSourceRef.current === 'AUTO_SCHEDULER') {
+             setSystemStatus(SystemStatus.EXECUTING_SCHEDULED_SENTINEL_PROTOCOL);
+         } else if (simulationSourceRef.current === 'RED_TEAM_MANUAL' || simulationSourceRef.current === 'ADMIN_CONSOLE_MANUAL') {
+             setSystemStatus(SystemStatus.EMERGENCY_ADVERSARY_EMULATION_IN_PROGRESS);
+         }
+      }
+
     } catch (e) {
       console.error(e);
     } finally {
@@ -604,6 +774,7 @@ export const Dashboard = () => {
     setSimulationMode(newMode);
     
     if (newMode === 'NOMINAL') {
+      setSimulationSource('UNKNOWN');
       setSystemStatus(SystemStatus.NOMINAL);
       consecutiveZombieTicksRef.current = 0;
       isFractureActiveRef.current = false;
@@ -612,6 +783,9 @@ export const Dashboard = () => {
       // Reset Hiccup
       setIsStalled(false);
       stallTickCountRef.current = 0;
+    } else {
+        // Assume manual dashboard toggle
+        setSimulationSource('DASHBOARD_MANUAL');
     }
   };
 
@@ -666,8 +840,43 @@ export const Dashboard = () => {
         .crt-active {
             animation: crtFlicker 0.15s infinite;
         }
+        
+        /* SENTINEL ACTUATION VISUALS */
+        @keyframes sentinelGlow {
+          0% { box-shadow: 0 0 5px rgba(239, 68, 68, 0.5); border-color: #ef4444; background-color: rgba(69, 10, 10, 0.5); }
+          50% { 
+            box-shadow: 0 0 25px rgba(${shiftColors.rgb}, 0.8), inset 0 0 10px rgba(${shiftColors.rgb}, 0.3); 
+            border-color: ${shiftColors.hex}; 
+            background-color: rgba(${shiftColors.rgb}, 0.1); 
+            color: ${shiftColors.hex}; 
+          }
+          100% { box-shadow: 0 0 5px rgba(239, 68, 68, 0.5); border-color: #ef4444; background-color: rgba(69, 10, 10, 0.5); }
+        }
+        @keyframes shockwaveExpand {
+            0% { transform: translate(-50%, -50%) scale(0); opacity: 1; border-width: 2px; }
+            100% { transform: translate(-50%, -50%) scale(1); opacity: 0; border-width: 0; }
+        }
+        .sentinel-btn-active {
+            animation: sentinelGlow 1s ease-in-out infinite;
+        }
       `}</style>
       
+      {/* SHOCKWAVE EFFECT OVERLAY */}
+      {shockwaveActive && (
+        <div 
+            className="fixed z-50 rounded-full border pointer-events-none"
+            style={{
+                left: shockwavePos.x,
+                top: shockwavePos.y,
+                width: '200vw',
+                height: '200vw',
+                borderColor: shiftColors.hex,
+                backgroundColor: `rgba(${shiftColors.rgb}, 0.1)`,
+                animation: 'shockwaveExpand 1.5s ease-out forwards'
+            }}
+        />
+      )}
+
       {/* SHIFT REPORTS MODAL */}
       {showShiftReports && (
           <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
@@ -716,7 +925,7 @@ export const Dashboard = () => {
                             className={`flex items-center gap-1 text-[10px] font-mono border px-2 py-1 rounded transition-all ${
                                 isGeneratingReport 
                                 ? 'bg-emerald-900/50 text-emerald-300 border-emerald-500 animate-pulse cursor-wait' 
-                                : 'bg-black border-gray-600 text-gray-400 hover:text-white hover:border-white'
+                                : 'bg-black border-gray-600 text-gray-400 hover:text-white hover:border-gray-400'
                             }`}
                         >
                             <Cpu className="w-3 h-3" />
@@ -818,16 +1027,24 @@ export const Dashboard = () => {
 
               {/* Force Cloud Reset Button */}
               <button 
-                onClick={() => initiateSelfHealing(history[history.length-1], true)}
+                ref={remediationButtonRef}
+                onClick={() => {
+                  const cmd = diagnosticResult?.interventions?.[0]?.cliCommand || "gcloud compute instances reset --all";
+                  triggerGitLabActuation(cmd);
+                  initiateSelfHealing(history[history.length-1], true);
+                }}
+                disabled={isAutonomousActuating}
                 className={`flex items-center justify-center gap-2 p-3 rounded font-bold transition-all border ${
-                  remediationTimer !== null
-                    ? 'bg-red-900 border-red-500 text-red-100 animate-pulse'
-                    : 'bg-hud-dark border-red-700 text-red-500 hover:bg-red-900/20'
+                  isAutonomousActuating 
+                    ? 'sentinel-btn-active cursor-wait'
+                    : remediationTimer !== null
+                        ? 'bg-red-900 border-red-500 text-red-100 animate-pulse'
+                        : 'bg-hud-dark border-red-700 text-red-500 hover:bg-red-900/20'
                 }`}
               >
-                <ServerCrash size={16} />
+                {isAutonomousActuating ? <RefreshCw size={16} className="animate-spin" /> : <ServerCrash size={16} />}
                 <span className="text-xs">
-                   [COMMIT_REMEDIATION_TO_{currentShift}]
+                   {isAutonomousActuating ? `[[SHIFT_${currentShift}_ACTUATING...]]` : `[COMMIT_REMEDIATION_TO_${currentShift}]`}
                 </span>
               </button>
 
@@ -900,7 +1117,14 @@ export const Dashboard = () => {
              {/* Log Stream Mini */}
              <div className="mt-6 pt-4 border-t border-gray-800">
                <h3 className="text-xs text-hud-muted uppercase tracking-widest mb-2 flex justify-between items-center">
-                 <span>System Kernel Log</span>
+                 <div className="flex items-center gap-2">
+                    <span>System Kernel Log</span>
+                    {queueDepth > 0 && (
+                        <span className="bg-yellow-900/50 text-yellow-400 text-[10px] px-1 rounded border border-yellow-600 flex items-center gap-1 animate-pulse">
+                            <Layers size={8} /> [QUEUE_DEPTH: {queueDepth}]
+                        </span>
+                    )}
+                 </div>
                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                </h3>
 
@@ -921,6 +1145,7 @@ export const Dashboard = () => {
                         log.includes('[UPLINK_SIM]') ? 'text-[#FFA500] font-bold animate-pulse' :
                         log.includes('[SYSTEM]: VIRTUAL_NODE') ? 'text-emerald-400 font-bold' :
                         log.includes('[TEST_MODE]') ? 'text-amber-500 font-bold' :
+                        log.includes('[TRAFFIC_CONTROL]') ? 'text-yellow-400 font-bold' :
                         log.includes('[ADVISORY]') ? 'text-[#FFD700] font-bold animate-pulse' : ''
                     }`}>{log}</div>
                   ))}

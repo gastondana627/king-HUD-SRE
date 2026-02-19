@@ -4,8 +4,8 @@ import { sendEmailAlert } from './notificationService';
 
 // GitLab Narrative: Implemented continuous security validation loop to simulate recurring adversary behavior and audit system resilience.
 
-// UPGRADE: Multi-Channel Schema + Forensic Stitching (Drill ID & Cognitive Score) + Intensity Metrics
-export const CSV_HEADER = "INCIDENT_START,REMEDIATION_TIME,SOURCE,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,COGNITIVE_LOAD_SCORE,CPU_MAX,RAM_MAX,TTR_SEC,SHIFT,SHIFT_STRIKE_COUNT,STALL_DETECTED";
+// UPGRADE: Multi-Channel Schema + Forensic Stitching (Drill ID & Cognitive Score) + Intensity Metrics + Queue Delay
+export const CSV_HEADER = "INCIDENT_START,REMEDIATION_TIME,SOURCE,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,COGNITIVE_LOAD_SCORE,CPU_MAX,RAM_MAX,TTR_SEC,SHIFT,SHIFT_STRIKE_COUNT,STALL_DETECTED,QUEUE_DELAY_SEC";
 const STORAGE_KEY = "telemetry_audit.csv";
 const HISTORY_KEY = "KING_HUD_HISTORY"; 
 const LAST_REPORT_KEY = "king_hud_last_daily_report";
@@ -71,35 +71,82 @@ export const getCurrentShift = (): string => {
   return "3RD_SHIFT";
 };
 
-export const startAuditScheduler = (triggerWave: () => void) => {
-  // 8 Hours in Milliseconds
-  const INTERVAL_MS = 8 * 60 * 60 * 1000;
+export const startAuditScheduler = (triggerWave: (source: string) => void) => {
+  let lastTriggerHour = -1;
+
+  console.log(`[AUDIT_SCHEDULER]: Continuous Security Validation Loop Active. Monitoring Shift Patterns (CST)...`);
   
-  console.log(`[AUDIT_SCHEDULER]: Continuous Security Validation Loop Active. Next Wave in ${INTERVAL_MS/1000}s.`);
-  
-  const interval = setInterval(async () => {
-    console.log("[AUDIT_SCHEDULER]: 8-Hour Mark. Initiating Zombie Wave for Resilience Audit.");
-    triggerWave();
-  }, INTERVAL_MS);
+  // Check every minute to ensure we catch the top of the hour
+  const interval = setInterval(() => {
+    // Get CST Time
+    const cstDate = new Date().toLocaleString("en-US", {
+        timeZone: "America/Chicago"
+    });
+    const dt = new Date(cstDate);
+    const hour = dt.getHours();
+    const minute = dt.getMinutes();
+
+    // Check for EOD Report at 08:00 CST (End of 3rd Shift)
+    // We pass strict CST logic here, but defer execution to checkAndSendDailySummary's internal logic
+    checkAndSendDailySummary();
+
+    // SCHEDULING LOGIC:
+    // Only trigger if we haven't triggered this hour yet
+    if (lastTriggerHour !== hour) {
+        // Trigger at the top of the hour (minute 0)
+        // In a real app, we might use cron, but this works for the simulation loop
+        if (minute === 0) {
+            let shouldTrigger = false;
+
+            // 1. Shift-Start Automation (09:00 CST and 17:00 CST)
+            if (hour === 9 || hour === 17) {
+                console.log(`[AUDIT_SCHEDULER]: Shift Start Detected (${hour}:00 CST). Initiating Scheduled Sentinel Protocol.`);
+                shouldTrigger = true;
+            }
+
+            // 2. Wits-End Ramp-Up (3rd Shift Hourly: 01:00 - 08:00 CST)
+            // 3rd Shift starts at 01:00. 08:00 is the end of the shift/handover.
+            if (hour >= 1 && hour <= 8) {
+                console.log(`[AUDIT_SCHEDULER]: 3rd Shift Intensity Protocol (${hour}:00 CST). Initiating Autonomous Wave.`);
+                shouldTrigger = true;
+            }
+
+            if (shouldTrigger) {
+                triggerWave("AUTO_SCHEDULER");
+                lastTriggerHour = hour;
+            }
+        }
+    }
+  }, 30000); // Check every 30 seconds to be safe on minute boundaries
 
   return () => clearInterval(interval);
 };
 
 export const checkAndSendDailySummary = async () => {
-  const lastReport = localStorage.getItem(LAST_REPORT_KEY);
-  const now = Date.now();
-  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  const nowMs = Date.now();
+  
+  // EOD CONSTRAINT: 08:00 AM CST (End of 3rd Shift)
+  const options: Intl.DateTimeFormatOptions = { timeZone: "America/Chicago", hour: "numeric", hour12: false };
+  const currentHour = parseInt(new Date().toLocaleString("en-US", options));
 
-  // Check if 24h passed
+  // Only run during the 8 AM hour (08:00 - 08:59)
+  if (currentHour !== 8) {
+     return;
+  }
+  
+  const lastReport = localStorage.getItem(LAST_REPORT_KEY);
+  // Prevent duplicate sends in the same hour window (check if sent in last 20 hours to be safe)
+  const TWENTY_HOURS_MS = 20 * 60 * 60 * 1000;
+  
   if (lastReport) {
       const lastTime = parseInt(lastReport);
-      if (now - lastTime < ONE_DAY_MS) {
-          console.log(`[AUDIT_SCHEDULER]: Daily Summary not due. Next window in ${((ONE_DAY_MS - (now - lastTime)) / 1000 / 60).toFixed(0)} mins.`);
+      if (nowMs - lastTime < TWENTY_HOURS_MS) {
+          // Already sent the EOD report for this cycle
           return;
       }
   }
 
-  console.log("[AUDIT_SCHEDULER]: Initiating 24-Hour Shift Handover Protocol...");
+  console.log("[AUDIT_SCHEDULER]: 0800 HOURS CST DETECTED - Initiating EOD Deep Analysis...");
 
   // Fetch logs from CSV
   const csvContent = localStorage.getItem(STORAGE_KEY);
@@ -111,17 +158,19 @@ export const checkAndSendDailySummary = async () => {
   const lines = csvContent.split('\n');
   const dataLines = lines.slice(1);
   
+  // Filter for last 24h
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
   const recentLogs = dataLines.filter(line => {
       if (!line.trim()) return false;
       const columns = line.split(',');
       const timestampStr = columns[0]; // Incident Start
       const timestamp = new Date(timestampStr).getTime();
-      return (now - timestamp) < ONE_DAY_MS;
+      return (nowMs - timestamp) < ONE_DAY_MS;
   });
 
   if (recentLogs.length === 0) {
       console.log("[AUDIT_SCHEDULER]: No activity in last 24h to report.");
-      localStorage.setItem(LAST_REPORT_KEY, now.toString()); // Reset timer anyway
+      localStorage.setItem(LAST_REPORT_KEY, nowMs.toString()); 
       return;
   }
 
@@ -130,10 +179,10 @@ export const checkAndSendDailySummary = async () => {
   
   // Send Email
   if (reportHTML) {
-      const emailResult = await sendEmailAlert("KING-HUD | DAILY_SHIFT_HANDOVER_REPORT", reportHTML);
+      const emailResult = await sendEmailAlert("KING-HUD | EOD_DEEP_ANALYSIS_REPORT", reportHTML);
       if (emailResult.success) {
-          console.log("[AUDIT_SCHEDULER]: Shift Handover Email Dispatched.");
-          localStorage.setItem(LAST_REPORT_KEY, now.toString());
+          console.log("[AUDIT_SCHEDULER]: EOD Deep Analysis Email Dispatched.");
+          localStorage.setItem(LAST_REPORT_KEY, nowMs.toString());
       } else {
           console.error("[AUDIT_SCHEDULER]: Failed to dispatch email.");
       }
@@ -171,6 +220,7 @@ const generateShiftHandoverReport = async (logs: string[]) => {
         4. Validate GEMINI_HYPOTHESIS_MATCH accuracy.
         5. CRITICAL: Flag any "DRILL_FAILED_HUMAN_OOB_TIMEOUT" events as 1st Shift coverage gaps (Human-in-the-Loop Failure).
         6. ANALYZE COGNITIVE_LOAD_SCORE: Report if the team is operating at Expert Level (Score ~1) or System Exhaustion (Score 10).
+        7. EOD DEEP ANALYSIS: Analyze the TTR (Time to Recovery) for all shifts. Compare human response (1st/2nd) vs. autonomous response (3rd). Identify if the hourly 3rd-shift stress caused any system fatigue or API rate-limiting.
     `;
 
     try {
@@ -218,7 +268,8 @@ export const logAuditEntry = async (
   incidentStart?: number,      // Optional start time (timestamp)
   // New: Operational Intensity & Hiccup Logic
   shiftStrikeCount: number = 0,
-  stallDetected: boolean = false
+  stallDetected: boolean = false,
+  queueDelay: number = 0 // TRAFFIC CONTROL: Delay in seconds
 ) => {
   const remediationTime = new Date().toISOString();
   const incidentStartTime = incidentStart ? new Date(incidentStart).toISOString() : new Date(Date.now() - (timeToRecovery * 1000)).toISOString();
@@ -259,8 +310,8 @@ export const logAuditEntry = async (
       }
   }
 
-  // CSV FORMAT: INCIDENT_START,REMEDIATION_TIME,SOURCE,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,COGNITIVE_LOAD_SCORE,CPU_MAX,RAM_MAX,TTR_SEC,SHIFT,SHIFT_STRIKE_COUNT,STALL_DETECTED
-  const line = `\n${incidentStartTime},${remediationTime},${interventionSource},${activeDrill},${geminiMatch},${cognitiveScore},${metrics.cpu.toFixed(2)},${metrics.ram.toFixed(2)},${timeToRecovery},${currentShift},${shiftStrikeCount},${stallDetected}`;
+  // CSV FORMAT: INCIDENT_START,REMEDIATION_TIME,SOURCE,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,COGNITIVE_LOAD_SCORE,CPU_MAX,RAM_MAX,TTR_SEC,SHIFT,SHIFT_STRIKE_COUNT,STALL_DETECTED,QUEUE_DELAY_SEC
+  const line = `\n${incidentStartTime},${remediationTime},${interventionSource},${activeDrill},${geminiMatch},${cognitiveScore},${metrics.cpu.toFixed(2)},${metrics.ram.toFixed(2)},${timeToRecovery},${currentShift},${shiftStrikeCount},${stallDetected},${queueDelay}`;
   
   const existing = localStorage.getItem(STORAGE_KEY) || CSV_HEADER;
   localStorage.setItem(STORAGE_KEY, existing + line);
@@ -270,6 +321,7 @@ export const logAuditEntry = async (
   // CLEANUP: If this was a remediation event (not the strike start), clear the drill
   if (!interventionSource.includes("ADMIN_REMOTE_STRIKE") && !interventionSource.includes("STRIKE")) {
        localStorage.removeItem(ACTIVE_DRILL_KEY);
+       // Internal Queue Logic removed - Handled by App.tsx Traffic Controller
   }
 };
 
@@ -376,12 +428,12 @@ export const invoke_ai_analysis = async (telemetryPayload: any) => {
   }
 };
 
-export const getShiftReports = () => {
-    return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-};
+// Updated Trigger: Accepts queueDelay and passes it to logAuditEntry
+export const triggerZombieStrike = (queueDelay: number = 0, source: string = "UNKNOWN") => {
+  // TRAFFIC CONTROLLER: Handled in App.tsx. 
+  // This function is now a dumb executor of the strike protocol.
 
-export const triggerZombieStrike = () => {
-  console.log("[AUDIT_SERVICE]: Executing Remote Zombie Strike Protocol...");
+  console.log(`[AUDIT_SERVICE]: Executing Remote Zombie Strike Protocol... (Source: ${source}, Queue Delay: ${queueDelay}s)`);
   
   // GENERATE UNIQUE DRILL ID (Adversarial Traceability)
   // Format: STRIKE_ + timestamp
@@ -392,13 +444,14 @@ export const triggerZombieStrike = () => {
   localStorage.setItem(ACTIVE_DRILL_KEY, drillId);
 
   const channel = new BroadcastChannel('king_hud_c2_channel');
-  channel.postMessage({ type: 'TRIGGER_ZOMBIE', drillId });
+  // Pass the source to the dashboard for logic branching
+  channel.postMessage({ type: 'TRIGGER_ZOMBIE', drillId, source });
   setTimeout(() => channel.close(), 100);
 
   const mockMetrics = { timestamp: Date.now(), cpu: 0, ram: 99.9, threads: 0, ioWait: 0 };
   
-  // LOG with unique DRILL_ID in the source tag for the Attack Event
-  logAuditEntry(mockMetrics, true, true, `ADMIN_REMOTE_STRIKE // ${drillId}`, false, 0);
+  // LOG with unique DRILL_ID and QUEUE DELAY
+  logAuditEntry(mockMetrics, true, true, `SOURCE: ${source} // ${drillId}`, false, 0, undefined, 0, false, queueDelay);
   
   return true;
 };
@@ -419,8 +472,8 @@ export const triggerRemediationWebhook = (instanceId: string, token: string, sou
     const ttr = 120; // Avg time for OOB manual intercept
 
     // NOTE: Webhooks from email links don't have access to Dashboard State (shift count/stalls).
-    // Passing default values (0, false) for now.
-    logAuditEntry(mockMetrics, true, true, source, geminiMatch ?? false, ttr, undefined, 0, false);
+    // Passing default values (0, false, 0) for now.
+    logAuditEntry(mockMetrics, true, true, source, geminiMatch ?? false, ttr, undefined, 0, false, 0);
     return { status: 200, message: "Remediation Executed via Webhook" };
 };
 
@@ -435,4 +488,14 @@ export const downloadAuditLog = () => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+};
+
+export const getShiftReports = () => {
+    try {
+        const history = localStorage.getItem(HISTORY_KEY);
+        return history ? JSON.parse(history) : [];
+    } catch (e) {
+        console.error("Failed to parse shift reports", e);
+        return [];
+    }
 };

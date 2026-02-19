@@ -1,12 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { ShieldAlert, Terminal, Skull, AlertTriangle, Fingerprint } from 'lucide-react';
-import { triggerZombieStrike } from '../services/auditService';
+import { TrafficContext } from '../App';
 
 export const AdminStrike = () => {
   const [authorized, setAuthorized] = useState(false);
   const [secret, setSecret] = useState('');
   const [logs, setLogs] = useState<string[]>([]);
   const [isStriking, setIsStriking] = useState(false);
+
+  // Consume Context
+  const { triggerStrike } = useContext(TrafficContext);
 
   // Check secret against environment or default
   const checkAuth = () => {
@@ -28,7 +31,8 @@ export const AdminStrike = () => {
     setIsStriking(true);
     addLog("INITIATING REMOTE ZOMBIE STRIKE PROTOCOL...");
     
-    triggerZombieStrike();
+    // Call Context Trigger instead of direct service call
+    triggerStrike("ADMIN_CONSOLE_MANUAL");
     
     setTimeout(() => {
         addLog("SIGNAL SENT. TARGET NODES INFECTED.");
