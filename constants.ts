@@ -10,9 +10,9 @@ export const GCP_CONFIG = {
 export const REBOOT_COOLDOWN_MS = 300000; // 5 minutes
 
 // FORENSIC TIMERS (SECONDS)
-export const INITIAL_HOLD_TIME = 180; // 3 Minutes (Forensic Window)
+export const INITIAL_HOLD_TIME = 30; // REDUCED: 30s (Speed Run Protocol)
 export const FAILSAFE_GRACE_TIME = 120; // 2 Minutes (Sentinel Fail-Safe)
-export const AUTO_REMEDIATE_THRESHOLD = INITIAL_HOLD_TIME + FAILSAFE_GRACE_TIME; // 300s Total
+export const AUTO_REMEDIATE_THRESHOLD = INITIAL_HOLD_TIME + FAILSAFE_GRACE_TIME; // 150s Total
 
 export const KING_HUD_SYSTEM_INSTRUCTION = `
 You are the King-HUD Agent, a specialized cognitive-aware SRE tool.

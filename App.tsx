@@ -26,6 +26,7 @@ export const App = () => {
   });
   
   const loggerRef = useRef<((msg: string) => void) | null>(null);
+  const isProcessingRef = useRef(false);
 
   useEffect(() => {
     console.log("KING-HUD_UI: RENDER_SUCCESSFUL [SYSTEM_REFRESH_COMPLETE]");
@@ -38,6 +39,11 @@ export const App = () => {
   };
 
   const incrementRemediationCount = () => {
+      // DEBOUNCE: Prevent double-tap glitches
+      if (isProcessingRef.current) return;
+      isProcessingRef.current = true;
+      setTimeout(() => { isProcessingRef.current = false; }, 5000);
+
       setRemediationCount(prev => {
           // CIRCUIT_BREAKER: Prevent further increments after sprint target
           if (prev >= 20) {

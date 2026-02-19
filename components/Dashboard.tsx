@@ -8,7 +8,7 @@ import { TelemetryPoint, DiagnosticResult, SystemStatus } from '../types';
 import { analyzeSystemState } from '../services/geminiService';
 import { sendNtfyAlert, broadcastCriticalAlert, sendEmailAlert, broadcastFailSafeAlert } from '../services/notificationService';
 import { executeInstanceReset } from '../services/cloudService';
-import { startAuditScheduler, logAuditEntry, invoke_ai_analysis, getShiftReports, isAuditorOnline, checkAndSendDailySummary, getCurrentShift, downloadAuditLog, resetUplinkConnection, broadcastStrikeClear, getStrikeMetrics, exportAuditLog } from '../services/auditService';
+import { startAuditScheduler, logAuditEntry, invoke_ai_analysis, getShiftReports, isAuditorOnline, checkAndSendDailySummary, getCurrentShift, downloadAuditLog, resetUplinkConnection, broadcastStrikeClear, getStrikeMetrics, exportAuditLog, postponeScheduler } from '../services/auditService';
 import { 
   SIMULATION_INTERVAL_MS, 
   MAX_HISTORY_POINTS, 
@@ -120,7 +120,8 @@ export const Dashboard = () => {
 
   const startForensicDecay = useCallback(() => {
       if (diagnosticResult) {
-          setForensicDecayTimer(60);
+          // SPEED RUN: Rapid Clear (15s)
+          setForensicDecayTimer(15);
           setIsForensicStale(true);
       }
   }, [diagnosticResult]);
@@ -505,6 +506,9 @@ export const Dashboard = () => {
           console.warn("Remediation Blocked: Forensic Window Active (Sentinel Leashed)");
           return;
       }
+      
+      // WAVE SYNC: Reset the Wave Timer on successful commit
+      postponeScheduler();
 
       setRemediationTimer(null); // Stop timer
       setRemediationPhase('HOLD'); // Reset phase
@@ -668,7 +672,7 @@ export const Dashboard = () => {
     
     setRemediationPhase('HOLD');
     setRemediationTimer(INITIAL_HOLD_TIME); 
-    setCommandStatus(`[CMD]: INITIATING FORENSIC HOLD (180s)...`);
+    setCommandStatus(`[CMD]: INITIATING FORENSIC HOLD (${INITIAL_HOLD_TIME}s)...`);
   };
 
   // Simulation Tick
@@ -988,6 +992,13 @@ export const Dashboard = () => {
         .sentinel-btn-active {
             animation: sentinelGlow 1s ease-in-out infinite;
         }
+        
+        /* POINTER EVENT LOCKING */
+        .controls-locked {
+            pointer-events: none;
+            opacity: 0.5;
+            filter: grayscale(0.8);
+        }
       `}</style>
       
       {/* SHOCKWAVE EFFECT OVERLAY */}
@@ -1008,7 +1019,7 @@ export const Dashboard = () => {
 
       {/* SHIFT REPORTS MODAL */}
       {showShiftReports && (
-          <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
               <div className={`bg-gray-950 border border-hud-primary w-full max-w-3xl h-[80vh] flex flex-col shadow-[0_0_50px_rgba(14,165,233,0.2)] crt-scanline-container ${isGeneratingReport ? 'crt-active' : ''}`}>
                   <div className="crt-scanline-bar"></div>
                   
@@ -1137,7 +1148,7 @@ export const Dashboard = () => {
                   </div>
 
                   {/* Modal Content */}
-                  <div className="flex-1 overflow-y-auto p-4 space-y-4 font-mono z-30 relative">
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4 font-mono z-30 relative max-h-[500px]">
                       {isGeneratingReport && (
                           <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50 text-emerald-500 font-mono text-sm tracking-widest">
                              <div className="animate-pulse flex flex-col items-center gap-2">
@@ -1180,7 +1191,7 @@ export const Dashboard = () => {
           </div>
       )}
 
-      <div className="grid grid-cols-12 gap-6 h-full">
+      <div className={`grid grid-cols-12 gap-6 h-full ${showShiftReports ? 'controls-locked' : ''}`}>
         {/* Left Column: Controls & Stats */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-4">
           

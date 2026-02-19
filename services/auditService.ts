@@ -482,7 +482,8 @@ Confidence set to ${activeIncidentPeakConfidence}% based on static threshold log
       };
       
       const existingReports = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-      const updatedReports = [reportEntry, ...existingReports].slice(0, 50);
+      // UI PERFORMANCE OPTIMIZATION: Slice to 20
+      const updatedReports = [reportEntry, ...existingReports].slice(0, 20);
       localStorage.setItem(HISTORY_KEY, JSON.stringify(updatedReports));
       
       return { report: fullContent, confidence: localConfidenceLabel };
@@ -556,7 +557,8 @@ Confidence set to ${activeIncidentPeakConfidence}% based on static threshold log
       };
 
       const existingReports = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-      const updatedReports = [reportEntry, ...existingReports].slice(0, 50);
+      // UI PERFORMANCE OPTIMIZATION: Slice to 20
+      const updatedReports = [reportEntry, ...existingReports].slice(0, 20);
       localStorage.setItem(HISTORY_KEY, JSON.stringify(updatedReports));
 
       return { report: reportText, confidence: confidenceLabel };
@@ -577,7 +579,7 @@ Confidence set to ${activeIncidentPeakConfidence}% based on static threshold log
       };
       
       const existingReports = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-      const updatedReports = [reportEntry, ...existingReports].slice(0, 50);
+      const updatedReports = [reportEntry, ...existingReports].slice(0, 20);
       localStorage.setItem(HISTORY_KEY, JSON.stringify(updatedReports));
 
       return { report: errorMsg, confidence: localConfidenceLabel };
@@ -666,6 +668,15 @@ export const broadcastStrikeClear = (source: string = "UNKNOWN") => {
   const channel = new BroadcastChannel('king_hud_c2_channel');
   channel.postMessage({ type: 'STRIKE_CLEARED_GLOBAL', source });
   channel.close();
+};
+
+// WAVE SYNC: POSTPONE SCHEDULER
+export const postponeScheduler = () => {
+    // Broadcast reset command to HUDLayout
+    console.log("[AUDIT_SERVICE]: Postponing Automated Wave (Resetting to 10m)...");
+    const channel = new BroadcastChannel('king_hud_wave_channel');
+    channel.postMessage({ type: 'RESET_WAVE_TIMER' });
+    channel.close();
 };
 
 export const triggerRemediationWebhook = (instance: string, token: string, source: string, metrics: any, geminiMatch: boolean) => {

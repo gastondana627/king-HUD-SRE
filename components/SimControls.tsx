@@ -77,7 +77,7 @@ export const SimControls: React.FC<SimControlsProps> = ({
   currentShift
 }) => {
   return (
-    <div className="hud-border p-4 relative z-[1000] min-w-[260px] max-w-[260px] overflow-visible bg-[#0a0f14]/98 border-r border-[#00f3ff]/40">
+    <div className="hud-border p-4 relative z-50 min-w-[260px] max-w-[260px] overflow-visible bg-[#0a0f14]/98 border-r border-[#00f3ff]/40">
       <h3 className="text-xs text-hud-muted uppercase tracking-widest mb-4">Sim Controls</h3>
       <div className="flex flex-col gap-3">
         

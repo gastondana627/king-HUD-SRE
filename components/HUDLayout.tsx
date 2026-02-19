@@ -14,6 +14,7 @@ interface HUDLayoutProps {
 
 export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediationTimer, remediationPhase = 'HOLD', shiftRemediationCount = 0, isStalled = false, currentShift = "1ST_SHIFT", strikeMetrics = { total24h: 0, currentShiftCount: 0 } }) => {
   const [nextWaveTimer, setNextWaveTimer] = useState("00:00:00");
+  const [waveOverrideTarget, setWaveOverrideTarget] = useState<number | null>(null);
 
   const isCritical = status === 'CRITICAL' || status === 'ZOMBIE_KERNEL';
   const isFracture = status === SystemStatus.C2_FRACTURE_DETECTED;
@@ -54,14 +55,42 @@ export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediat
     glowColor = 'shadow-[0_0_15px_#FFD700] animate-pulse';
   }
 
+  // Wave Reset Listener
+  useEffect(() => {
+    const channel = new BroadcastChannel('king_hud_wave_channel');
+    channel.onmessage = (event) => {
+        if (event.data.type === 'RESET_WAVE_TIMER') {
+            console.log("HUDLayout: Resetting Wave Timer to 10m.");
+            setWaveOverrideTarget(Date.now() + 600000); // 10 minutes from now
+        }
+    };
+    return () => channel.close();
+  }, []);
+
   // Shift Timer Logic
   useEffect(() => {
     const interval = setInterval(() => {
-        const now = new Date();
+        const now = Date.now();
+        
+        // PRIORITY 1: OVERRIDE TIMER (10m Reset)
+        if (waveOverrideTarget && waveOverrideTarget > now) {
+            const diffMs = waveOverrideTarget - now;
+            const diffSec = Math.floor(diffMs / 1000);
+            const mins = Math.floor(diffSec / 60);
+            const secs = diffSec % 60;
+            setNextWaveTimer(`00:${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`);
+            return;
+        } else if (waveOverrideTarget) {
+            // Expired
+            setWaveOverrideTarget(null);
+        }
+
+        // PRIORITY 2: STANDARD SHIFT LOGIC
+        const nowDate = new Date();
         const options: Intl.DateTimeFormatOptions = { timeZone: "America/Chicago", hour12: false };
-        const h = parseInt(now.toLocaleString("en-US", { ...options, hour: "numeric" }));
-        const m = parseInt(now.toLocaleString("en-US", { ...options, minute: "numeric" }));
-        const s = parseInt(now.toLocaleString("en-US", { ...options, second: "numeric" }));
+        const h = parseInt(nowDate.toLocaleString("en-US", { ...options, hour: "numeric" }));
+        const m = parseInt(nowDate.toLocaleString("en-US", { ...options, minute: "numeric" }));
+        const s = parseInt(nowDate.toLocaleString("en-US", { ...options, second: "numeric" }));
 
         // Shift Targets: 01:00, 09:00, 17:00
         const targets = [1, 9, 17];
@@ -82,7 +111,7 @@ export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediat
         setNextWaveTimer(`${hours.toString().padStart(2,'0')}:${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`);
     }, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [waveOverrideTarget]);
 
   // Timer Formatting (MM:SS) - Explicitly restricted to Minutes and Seconds
   const formatTime = (sec: number | null) => {
