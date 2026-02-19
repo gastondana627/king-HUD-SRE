@@ -671,23 +671,6 @@ export const Dashboard = () => {
     setCommandStatus(`[CMD]: INITIATING FORENSIC HOLD (180s)...`);
   };
 
-  // ADMIN STRIKE 5-SECOND PULSE LOGIC
-  useEffect(() => {
-    if (simulationSource === 'ADMIN_REMOTE_STRIKE') {
-      const timer = setTimeout(() => {
-        if (simulationMode === 'ZOMBIE') {
-           setSimulationMode('NOMINAL');
-           setSimulationSource('UNKNOWN');
-           setSystemStatus(SystemStatus.NOMINAL);
-           isFractureActiveRef.current = false;
-           consecutiveZombieTicksRef.current = 0;
-           logsRef.current = [...logsRef.current, "[INFO]: REMOTE_STRIKE_PULSE_ENDED. TELEMETRY_NORMALIZING."];
-        }
-      }, 5000); // 5 Seconds Exact Pulse
-      return () => clearTimeout(timer);
-    }
-  }, [simulationSource, simulationMode]);
-
   // Simulation Tick
   useEffect(() => {
     let interval: number;
@@ -701,9 +684,9 @@ export const Dashboard = () => {
 
           if (simulationMode === 'ZOMBIE') {
             // ADMIN STRIKE LOGIC: EXACT METRICS
-            if (simulationSource === 'ADMIN_REMOTE_STRIKE') {
-                newCpu = 0.01;
-                newRam = 98.0;
+            if (simulationSource === 'ADMIN_REMOTE_STRIKE' || simulationSource === 'RED_TEAM_MANUAL') {
+                newCpu = 0.2;
+                newRam = 99.0;
                 newThreads = prev[prev.length - 1].threads; // Freeze threads
                 newIo = 0.0;
                 // Add a log only occasionally to avoid spamming

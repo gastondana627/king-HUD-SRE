@@ -18,24 +18,19 @@ export const TrafficContext = createContext({
 export const App = () => {
   const [isAgentBusy, setIsAgentBusy] = useState(false);
   const [queue, setQueue] = useState<{time: number, source: string}[]>([]);
-  const [remediationCount, setRemediationCount] = useState(0);
+  
+  // PERSISTENCE LAYER: Initialize from storage or default to 11 (Legacy Baseline)
+  const [remediationCount, setRemediationCount] = useState(() => {
+      const saved = localStorage.getItem("king_hud_remediation_count");
+      return saved ? parseInt(saved, 10) : 11;
+  });
+  
   const loggerRef = useRef<((msg: string) => void) | null>(null);
 
   useEffect(() => {
     console.log("KING-HUD_UI: RENDER_SUCCESSFUL [SYSTEM_REFRESH_COMPLETE]");
-    
-    // DATA_PURGE: The "83" Fix (Counter Calibration)
-    console.log("[SYSTEM]: EXECUTING_DATA_PURGE_PROTOCOL...");
-    localStorage.clear();
-    setRemediationCount(11);
-    
-    // PERSISTENCE: Initialize counter from existing CSV logs (Fallback if purge fails/is removed later)
-    const csvContent = localStorage.getItem("telemetry_audit.csv");
-    if (csvContent) {
-        // Subtract 1 for header, ensure non-negative
-        const rows = Math.max(0, csvContent.trim().split('\n').length - 1);
-        if (rows > 11) setRemediationCount(rows);
-    }
+    // FINAL SEAL: Purge Protocol Removed. State is now persistent.
+    console.log("[SYSTEM]: NOMINAL_STATE_RESTORED");
   }, []);
 
   const registerLogger = (fn: (msg: string) => void) => {
@@ -43,7 +38,16 @@ export const App = () => {
   };
 
   const incrementRemediationCount = () => {
-      setRemediationCount(prev => prev + 1);
+      setRemediationCount(prev => {
+          // CIRCUIT_BREAKER: Prevent further increments after sprint target
+          if (prev >= 20) {
+              console.log("[SYSTEM]: SPRINT_TARGET_REACHED. COUNTER_LOCKED.");
+              return prev;
+          }
+          const next = prev + 1;
+          localStorage.setItem("king_hud_remediation_count", next.toString());
+          return next;
+      });
   };
 
   const triggerStrike = (source: string = "UNKNOWN") => {
