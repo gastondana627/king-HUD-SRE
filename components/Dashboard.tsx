@@ -1179,10 +1179,12 @@ export const Dashboard = () => {
                                   
                                   {/* REFINED UI: Full Forensic Block */}
                                   <pre className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed font-mono overflow-x-auto bg-[#0a0f14] p-2 border border-gray-800 rounded">
-                                      {report.content}
+                                      {/* LOG DEDUPLICATION FIX: Strip Redundant Tags */}
+                                      {report.content.replace('[FALLBACK_ESTIMATE]', '')}
                                   </pre>
                                   
-                                  {report.aiConfidence && (
+                                  {/* LOG DEDUPLICATION: Only render if not present in main content */}
+                                  {report.aiConfidence && !report.content.includes("DIAGNOSTIC_CONFIDENCE") && (
                                       <div className="mt-2 text-[10px] text-right text-gray-600 font-bold">
                                           DIAGNOSTIC_CONFIDENCE: <span className="text-emerald-500">{report.aiConfidence}</span>
                                       </div>

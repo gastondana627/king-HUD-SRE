@@ -18,7 +18,7 @@ interface SimControlsProps {
 }
 
 const ForensicTooltip = ({ text, type = 'standard' }: { text: string, type?: 'standard' | 'critical' }) => (
-  <div className="absolute left-full top-1/2 -translate-y-1/2 ml-3 z-[100] pointer-events-none transition-opacity duration-200 animate-in fade-in zoom-in-95 w-max">
+  <div className="absolute left-[105%] top-1/2 -translate-y-1/2 ml-2 z-[10000] pointer-events-none transition-opacity duration-200 animate-in fade-in zoom-in-95 w-max">
     <div className={`relative px-3 py-1.5 bg-[#050505] border ${type === 'critical' ? 'border-[#ff003c] text-[#ff003c]' : 'border-[#00f3ff] text-[#00f3ff]'} text-[10px] font-mono shadow-[0_0_15px_rgba(0,0,0,0.8)] whitespace-nowrap tracking-wider flex items-center overflow-hidden`}>
       {/* Scanline Effect Overlay */}
       <div className="absolute inset-0 bg-[linear-gradient(rgba(0,0,0,0)_50%,rgba(0,0,0,0.2)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(255,0,0,0.02),rgba(255,0,0,0.06))] bg-[length:100%_2px,3px_100%] pointer-events-none opacity-30 z-0"></div>
@@ -27,7 +27,7 @@ const ForensicTooltip = ({ text, type = 'standard' }: { text: string, type?: 'st
       <span className="relative z-10">{text}</span>
       
       {/* Connecting Arrow */}
-      <div className={`absolute left-0 top-1/2 -translate-x-[50%] -translate-y-1/2 w-2 h-2 bg-[#050505] border-l border-b ${type === 'critical' ? 'border-[#ff003c]' : 'border-[#00f3ff]'} rotate-45`}></div>
+      <div className={`absolute -left-1 top-1/2 -translate-y-1/2 w-2 h-2 bg-[#050505] border-l border-b ${type === 'critical' ? 'border-[#ff003c]' : 'border-[#00f3ff]'} rotate-45`}></div>
     </div>
   </div>
 );
@@ -77,7 +77,7 @@ export const SimControls: React.FC<SimControlsProps> = ({
   currentShift
 }) => {
   return (
-    <div className="hud-border p-4 relative z-50">
+    <div className="hud-border p-4 relative z-[1000] min-w-[260px] max-w-[260px] overflow-visible bg-[#0a0f14]/98 border-r border-[#00f3ff]/40">
       <h3 className="text-xs text-hud-muted uppercase tracking-widest mb-4">Sim Controls</h3>
       <div className="flex flex-col gap-3">
         

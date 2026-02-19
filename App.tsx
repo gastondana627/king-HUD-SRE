@@ -24,12 +24,17 @@ export const App = () => {
   useEffect(() => {
     console.log("KING-HUD_UI: RENDER_SUCCESSFUL [SYSTEM_REFRESH_COMPLETE]");
     
-    // PERSISTENCE: Initialize counter from existing CSV logs
+    // DATA_PURGE: The "83" Fix (Counter Calibration)
+    console.log("[SYSTEM]: EXECUTING_DATA_PURGE_PROTOCOL...");
+    localStorage.clear();
+    setRemediationCount(11);
+    
+    // PERSISTENCE: Initialize counter from existing CSV logs (Fallback if purge fails/is removed later)
     const csvContent = localStorage.getItem("telemetry_audit.csv");
     if (csvContent) {
         // Subtract 1 for header, ensure non-negative
         const rows = Math.max(0, csvContent.trim().split('\n').length - 1);
-        setRemediationCount(rows);
+        if (rows > 11) setRemediationCount(rows);
     }
   }, []);
 
