@@ -13,6 +13,9 @@ const HISTORY_KEY = "KING_HUD_HISTORY";
 const LAST_REPORT_KEY = "king_hud_last_daily_report";
 const ACTIVE_DRILL_KEY = "KING_HUD_ACTIVE_DRILL";
 
+// Persist peak confidence for the active incident to prevent decay
+let activeIncidentPeakConfidence = 0;
+
 // Helper for Environment Variable compatibility (Vercel/Vite/Node)
 const getEnvVar = (key: string) => {
     try {
@@ -170,11 +173,32 @@ export const checkAndSendDailySummary = async () => {
   
   // Filter for last 24h
   const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-  const recentLogs = dataLines.filter(line => {
-      if (!line.trim()) return false;
+  
+  let totalFractures = 0;
+  let totalTTR = 0;
+  let humanCount = 0;
+  let agentCount = 0;
+  const recentLogs: string[] = [];
+
+  dataLines.forEach(line => {
+      if (!line.trim()) return;
       const columns = line.split(',');
-      const timestampStr = columns[0]; // Incident Start
-      return true; 
+      const timestamp = parseInt(columns[2]);
+      
+      if (nowMs - timestamp <= ONE_DAY_MS) {
+          recentLogs.push(line);
+          totalFractures++;
+          
+          const ttr = parseFloat(columns[8]) || 0;
+          totalTTR += ttr;
+          
+          const triggerType = columns[4]; // 'AUTO' or 'MANUAL'
+          if (triggerType === 'MANUAL') {
+              humanCount++;
+          } else {
+              agentCount++;
+          }
+      }
   });
 
   if (recentLogs.length === 0) {
@@ -182,9 +206,20 @@ export const checkAndSendDailySummary = async () => {
       localStorage.setItem(LAST_REPORT_KEY, nowMs.toString()); 
       return;
   }
+  
+  const avgTTR = totalFractures > 0 ? (totalTTR / totalFractures).toFixed(1) : "0";
+  const efficiencyRatio = agentCount > 0 ? (humanCount / agentCount).toFixed(2) : (humanCount > 0 ? "INFINITE" : "0.00");
+
+  const metrics = {
+      totalFractures,
+      avgTTR,
+      humanCount,
+      agentCount,
+      efficiencyRatio
+  };
 
   // Generate Report
-  const reportHTML = await generateShiftHandoverReport(recentLogs);
+  const reportHTML = await generateShiftHandoverReport(recentLogs, metrics);
   
   // Send Email
   if (reportHTML) {
@@ -198,7 +233,7 @@ export const checkAndSendDailySummary = async () => {
   }
 };
 
-const generateShiftHandoverReport = async (logs: string[]) => {
+const generateShiftHandoverReport = async (logs: string[], metrics?: any) => {
     if (!getGeminiKey()) {
         console.warn("[AUDIT_SERVICE]: Cannot generate Daily Report - No API Key");
         return null;
@@ -221,6 +256,13 @@ const generateShiftHandoverReport = async (logs: string[]) => {
     const userContent = `
         [SHIFT_DATA_INGEST]:
         ${logData}
+        
+        [CALCULATED_METRICS_24H]:
+        - TOTAL_FRACTURES: ${metrics?.totalFractures || 0}
+        - AVG_TTR: ${metrics?.avgTTR || 0}s
+        - HUMAN_INTERVENTIONS: ${metrics?.humanCount || 0}
+        - AGENT_INTERVENTIONS: ${metrics?.agentCount || 0}
+        - HUMAN_VS_AGENT_EFFICIENCY_RATIO: ${metrics?.efficiencyRatio || "N/A"}
 
         [DIRECTIVE]:
         1. Summarize total incidents (Zombie Kernels vs Admin Strikes).
@@ -229,7 +271,7 @@ const generateShiftHandoverReport = async (logs: string[]) => {
         4. Validate GEMINI_HYPOTHESIS_MATCH accuracy.
         5. CRITICAL: Flag any "DRILL_FAILED_HUMAN_OOB_TIMEOUT" events as 1st Shift coverage gaps (Human-in-the-Loop Failure).
         6. ANALYZE COGNITIVE_LOAD_SCORE: Report if the team is operating at Expert Level (Score ~1) or System Exhaustion (Score 10).
-        7. EOD DEEP ANALYSIS: Analyze the TTR (Time to Recovery) for all shifts. Compare human response (1st/2nd) vs. autonomous response (3rd). Identify if the hourly 3rd-shift stress caused any system fatigue or API rate-limiting.
+        7. EOD DEEP ANALYSIS: Use the provided calculated metrics to assess team performance. Discuss the Efficiency Ratio.
     `;
 
     try {
@@ -354,6 +396,11 @@ export const logAuditEntry = async (
       }
   }
 
+  // Reset Peak Confidence if this was a completed remediation
+  if (timeToRecovery > 0) {
+      activeIncidentPeakConfidence = 0;
+  }
+
   // CSV FORMAT: UTC_DATE,UTC_TIME_PRECISION,UNIX_EPOCH,INCIDENT_UUID,TRIGGER_TYPE,CPU_PEAK,RAM_PEAK,AI_THOUGHT_LATENCY_SEC,TOTAL_RECOVERY_TIME_SEC,SHIFT_ID,ASSOCIATED_DRILL,GEMINI_HYPOTHESIS_MATCH,HEURISTIC_CONFIDENCE,COGNITIVE_LOAD_SCORE,STALL_DETECTED,QUEUE_DELAY_SEC,IS_ADVERSARY_MODE,LATENCY_HUMAN_ACTION_SEC
   const line = `\n${utcDate},${utcTimePrecision},${unixEpoch},${forensicId},${triggerType},${metrics.cpu.toFixed(2)},${metrics.ram.toFixed(2)},${analysisLatency},${ttrClean},${shiftId},${activeDrill},${geminiMatch},${heuristicConfidence},${cognitiveScore},${stallDetected},${queueDelay},${isAdversaryMode},${latencyClean}`;
   
@@ -387,6 +434,11 @@ export const invoke_ai_analysis = async (telemetryPayload: any) => {
   // Heuristic Rule: CPU Strike (High CPU)
   if (cpu > 90) localHeuristicScore = 80;
 
+  // PERSISTENCE LOGIC: Latch peak confidence for this incident
+  if (localHeuristicScore > activeIncidentPeakConfidence) {
+      activeIncidentPeakConfidence = localHeuristicScore;
+  }
+
   // Helper for status mapping
   const getConfidenceLabel = (score: number) => {
       if (score <= 30) return `SPECULATIVE_FRAGMENTS (${score}%)`;
@@ -394,7 +446,7 @@ export const invoke_ai_analysis = async (telemetryPayload: any) => {
       return `VERIFIED_C2_FRACTURE (${score}%)`;
   };
 
-  const localConfidenceLabel = getConfidenceLabel(localHeuristicScore);
+  const localConfidenceLabel = getConfidenceLabel(activeIncidentPeakConfidence);
 
   if (!getGeminiKey()) {
       console.warn("[AUDIT_SERVICE]: Missing Gemini API Key. Switching to Local Heuristics.");
@@ -406,11 +458,11 @@ export const invoke_ai_analysis = async (telemetryPayload: any) => {
 HEURISTIC_DUMP:
 > CPU_LOAD: ${cpu.toFixed(2)}%
 > RAM_RESIDENCY: ${ram.toFixed(2)}%
-> PATTERN_MATCH: ${localHeuristicScore > 50 ? 'POSITIVE' : 'NEGATIVE'}
+> PATTERN_MATCH: ${activeIncidentPeakConfidence > 50 ? 'POSITIVE' : 'NEGATIVE'}
 
 HYPOTHESIS:
 Local pattern matching algorithms detect signature consistent with infrastructure instability. 
-Confidence set to ${localHeuristicScore}% based on static threshold logic.
+Confidence set to ${activeIncidentPeakConfidence}% based on static threshold logic.
 `;
       
       const fullContent = `${headerPrefix}\n${errorMsg}\n${offlineAnalysis}`;
@@ -477,7 +529,13 @@ Confidence set to ${localHeuristicScore}% based on static threshold logic.
       
       const confidenceMatch = reportText.match(/CONFIDENCE_SCORE:\s*(\d+)%/i);
       const confidenceScoreVal = confidenceMatch ? parseInt(confidenceMatch[1]) : localHeuristicScore;
-      const confidenceLabel = getConfidenceLabel(confidenceScoreVal);
+      
+      // Update Peak with AI Score if higher
+      if (confidenceScoreVal > activeIncidentPeakConfidence) {
+          activeIncidentPeakConfidence = confidenceScoreVal;
+      }
+      
+      const confidenceLabel = getConfidenceLabel(activeIncidentPeakConfidence);
       
       const integrityScore = Math.floor(Math.random() * (100 - 89) + 89);
 
@@ -522,70 +580,66 @@ Confidence set to ${localHeuristicScore}% based on static threshold logic.
   }
 };
 
-export const triggerZombieStrike = (queueDelay: number = 0, source: string = "UNKNOWN") => {
-  console.log(`[AUDIT_SERVICE]: Executing Remote Zombie Strike Protocol... (Source: ${source}, Queue Delay: ${queueDelay}s)`);
-  
-  const drillId = `STRIKE_${Date.now()}`;
-  localStorage.setItem(ACTIVE_DRILL_KEY, drillId);
-
-  const channel = new BroadcastChannel('king_hud_c2_channel');
-  channel.postMessage({ type: 'TRIGGER_ZOMBIE', drillId, source });
-  setTimeout(() => channel.close(), 100);
-
-  const mockMetrics = { timestamp: Date.now(), cpu: 0, ram: 99.9, threads: 0, ioWait: 0 };
-  
-  logAuditEntry(mockMetrics, true, true, `SOURCE: ${source} // ${drillId}`, false, 0, undefined, 0, false, queueDelay, 0);
-  
-  return true;
-};
-
-export const triggerRemediationWebhook = (instanceId: string, token: string, source: string = "BLUE_TEAM_OOB_LINK", metrics?: any, geminiMatch?: boolean) => {
-    console.log(`[WEBHOOK_LISTENER]: POST /api/remediate (Instance: ${instanceId}, Source: ${source})`);
-    
-    const mockMetrics: TelemetryPoint = metrics || { 
-        timestamp: Date.now(), 
-        cpu: 0.0, 
-        ram: 99.9, 
-        threads: 0, 
-        ioWait: 0 
-    };
-
-    const ttr = 120; // Avg time for OOB manual intercept
-
-    // Log with latency equal to TTR (approx) for webhook events where exact latency isn't tracked client-side
-    logAuditEntry(mockMetrics, true, true, source, geminiMatch ?? false, ttr, undefined, 0, false, 0, ttr);
-    return { status: 200, message: "Remediation Executed via Webhook" };
-};
-
-export const downloadAuditLog = () => {
-    const csvContent = localStorage.getItem(STORAGE_KEY) || CSV_HEADER;
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute("download", "king_hud_telemetry_audit.csv");
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+export const resetUplinkConnection = () => {
+  aiClient = null;
+  console.log("[AUDIT_SERVICE]: Uplink connection reset. Next request will re-handshake.");
 };
 
 export const getShiftReports = () => {
-    try {
-        const history = localStorage.getItem(HISTORY_KEY);
-        return history ? JSON.parse(history) : [];
-    } catch (e) {
-        console.error("Failed to parse shift reports", e);
-        return [];
-    }
+  try {
+    const history = localStorage.getItem(HISTORY_KEY);
+    return history ? JSON.parse(history) : [];
+  } catch (e) {
+    console.error("Failed to load shift reports", e);
+    return [];
+  }
 };
 
-export const resetUplinkConnection = () => {
-    console.log("[UPLINK]: Resetting Neural Handshake...");
-    getAIClient(true);
-    const history = getShiftReports();
-    const cleanHistory = history.filter((h: any) => h.aiConfidence !== "0%" && h.aiConfidence !== "ERROR");
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(cleanHistory));
+export const downloadAuditLog = () => {
+  const csvContent = localStorage.getItem(STORAGE_KEY) || CSV_HEADER;
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  link.setAttribute("href", url);
+  link.setAttribute("download", `king_hud_audit_${Date.now()}.csv`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
+export const triggerZombieStrike = (delaySec: number, source: string) => {
+  console.log(`[AUDIT_SERVICE]: Triggering Zombie Strike via Broadcast (Source: ${source}, Delay: ${delaySec}s)`);
+  // Dashboard listens for this event to start visual simulation
+  const channel = new BroadcastChannel('king_hud_c2_channel');
+  channel.postMessage({ type: 'TRIGGER_ZOMBIE', source });
+  channel.close();
+};
+
+export const triggerRemediationWebhook = (instance: string, token: string, source: string, metrics: any, geminiMatch: boolean) => {
+    // Log the OOB remediation event
+    const safeMetrics: TelemetryPoint = {
+        timestamp: metrics?.timestamp || Date.now(),
+        cpu: metrics?.cpu || 0,
+        ram: metrics?.ram || 0,
+        threads: metrics?.threads || 0,
+        ioWait: metrics?.ioWait || 0
+    };
+
+    console.log(`[AUDIT_SERVICE]: Logging Remediation Webhook Event for ${instance}`);
     
-    return true;
+    // Log audit entry with assumption of success
+    logAuditEntry(
+        safeMetrics,
+        true, // Alert Success
+        true, // Remediation Triggered
+        source, 
+        geminiMatch,
+        120, // Estimated TTR for OOB
+        Date.now() - 120000,
+        0, // shiftStrikeCount
+        false, // stallDetected
+        0, // queueDelay
+        10 // humanLatency
+    );
 };

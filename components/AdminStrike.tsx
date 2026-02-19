@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { ShieldAlert, Terminal, Skull, AlertTriangle, Fingerprint, ArrowLeft } from 'lucide-react';
+import { ShieldAlert, Terminal, Skull, AlertTriangle, Fingerprint, ArrowLeft, Hourglass } from 'lucide-react';
 import { TrafficContext } from '../App';
 import { useNavigate } from 'react-router-dom';
 
@@ -11,7 +11,7 @@ export const AdminStrike = () => {
   const navigate = useNavigate();
 
   // Consume Context
-  const { triggerStrike } = useContext(TrafficContext);
+  const { triggerStrike, isAgentBusy } = useContext(TrafficContext);
 
   // Global ESC Listener for Navigation
   useEffect(() => {
@@ -42,15 +42,22 @@ export const AdminStrike = () => {
 
   const handleStrike = () => {
     setIsStriking(true);
-    addLog("INITIATING REMOTE ZOMBIE STRIKE PROTOCOL...");
     
-    // Call Context Trigger with the specific SOURCE required for 5s pulse logic
+    if (isAgentBusy) {
+        addLog("[TRAFFIC_CONTROL]: SYSTEM_RECOVERING. STRIKE_QUEUED.");
+    } else {
+        addLog("INITIATING REMOTE ZOMBIE STRIKE PROTOCOL...");
+    }
+    
+    // Call Context Trigger which handles Queueing if Busy
     triggerStrike("ADMIN_REMOTE_STRIKE");
     
     setTimeout(() => {
-        addLog("SIGNAL SENT. TARGET NODES INFECTED.");
-        addLog("[STRIKE]: ADVERSARY_PAYLOAD_DEPLOYED.");
-        addLog("AUDIT TRAIL: SOURCE: ADMIN_REMOTE_STRIKE");
+        if (!isAgentBusy) {
+            addLog("SIGNAL SENT. TARGET NODES INFECTED.");
+            addLog("[STRIKE]: ADVERSARY_PAYLOAD_DEPLOYED.");
+            addLog("AUDIT TRAIL: SOURCE: ADMIN_REMOTE_STRIKE");
+        }
         setIsStriking(false);
     }, 5000); // 5 Seconds visual feedback to match the pulse
   };
@@ -155,8 +162,8 @@ export const AdminStrike = () => {
                 {/* Status Indicator */}
                 <div className="absolute top-4 right-4 flex flex-col items-end">
                     <div className="text-[10px] tracking-widest opacity-70 mb-1">WEAPON STATUS</div>
-                    <div className="text-xl font-display font-bold text-red-500 animate-[pulse_0.2s_ease-in-out_infinite]">
-                        STRIKE_READY
+                    <div className={`text-xl font-display font-bold ${isAgentBusy ? 'text-amber-500' : 'text-red-500'} animate-[pulse_0.2s_ease-in-out_infinite]`}>
+                        {isAgentBusy ? 'STRIKE_QUEUED' : 'STRIKE_READY'}
                     </div>
                 </div>
 
@@ -168,18 +175,27 @@ export const AdminStrike = () => {
 
                 <button 
                     onClick={handleStrike}
-                    disabled={isStriking}
+                    disabled={isStriking || (isAgentBusy && isStriking)}
                     className={`relative w-64 h-64 rounded-full border-4 flex flex-col items-center justify-center transition-all duration-300
-                    ${isStriking 
-                        ? 'bg-red-900 border-red-950 scale-95 cursor-wait opacity-80' 
+                    ${isStriking || isAgentBusy
+                        ? 'bg-red-900/50 border-red-800 scale-95 opacity-80' 
                         : 'bg-transparent border-red-600 hover:bg-red-950/30 hover:shadow-[0_0_50px_rgba(220,38,38,0.4)] hover:scale-105 active:scale-95 cursor-pointer'
                     }`}
                 >
-                    <ShieldAlert className={`w-16 h-16 mb-4 transition-transform duration-200 ${isStriking ? 'animate-spin' : ''}`} />
+                    {isAgentBusy && !isStriking ? (
+                        <Hourglass className="w-16 h-16 mb-4 text-amber-500 animate-pulse" />
+                    ) : (
+                        <ShieldAlert className={`w-16 h-16 mb-4 transition-transform duration-200 ${isStriking ? 'animate-spin' : ''}`} />
+                    )}
+                    
                     <span className="text-xl font-bold tracking-widest text-center px-4">
-                        {isStriking ? 'DEPLOYING...' : '[[INITIATE_REMOTE_ZOMBIE_STRIKE]]'}
+                        {isStriking 
+                            ? (isAgentBusy ? 'QUEUEING...' : 'DEPLOYING...') 
+                            : (isAgentBusy ? 'QUEUE_STRIKE' : '[[INITIATE_REMOTE_ZOMBIE_STRIKE]]')}
                     </span>
-                    <span className="text-xs mt-1 opacity-70">ZOMBIE PAYLOAD</span>
+                    <span className="text-xs mt-1 opacity-70">
+                        {isAgentBusy ? 'WAITING_FOR_NOMINAL' : 'ZOMBIE PAYLOAD'}
+                    </span>
                 </button>
             </div>
 

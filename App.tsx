@@ -10,20 +10,35 @@ export const TrafficContext = createContext({
   setBusy: (busy: boolean) => {},
   triggerStrike: (source?: string) => {},
   queueDepth: 0,
-  registerLogger: (logger: (msg: string) => void) => {}
+  registerLogger: (logger: (msg: string) => void) => {},
+  remediationCount: 0,
+  incrementRemediationCount: () => {}
 });
 
 export const App = () => {
   const [isAgentBusy, setIsAgentBusy] = useState(false);
   const [queue, setQueue] = useState<{time: number, source: string}[]>([]);
+  const [remediationCount, setRemediationCount] = useState(0);
   const loggerRef = useRef<((msg: string) => void) | null>(null);
 
   useEffect(() => {
     console.log("KING-HUD_UI: RENDER_SUCCESSFUL [SYSTEM_REFRESH_COMPLETE]");
+    
+    // PERSISTENCE: Initialize counter from existing CSV logs
+    const csvContent = localStorage.getItem("telemetry_audit.csv");
+    if (csvContent) {
+        // Subtract 1 for header, ensure non-negative
+        const rows = Math.max(0, csvContent.trim().split('\n').length - 1);
+        setRemediationCount(rows);
+    }
   }, []);
 
   const registerLogger = (fn: (msg: string) => void) => {
     loggerRef.current = fn;
+  };
+
+  const incrementRemediationCount = () => {
+      setRemediationCount(prev => prev + 1);
   };
 
   const triggerStrike = (source: string = "UNKNOWN") => {
@@ -49,6 +64,7 @@ export const App = () => {
 
        if (loggerRef.current) loggerRef.current(`[TRAFFIC_CONTROL]: AGENT_FREE. EXECUTING_QUEUED_STRIKE (Waited ${delaySec}s). Launching in 10s...`);
 
+       // Wait for 10s "Cool Down" / "Preparation" before launching next wave
        const timer = setTimeout(() => {
            setQueue(remainingQueue);
            triggerZombieStrike(delaySec, nextItem.source);
@@ -65,7 +81,9 @@ export const App = () => {
         setBusy: setIsAgentBusy, 
         triggerStrike, 
         queueDepth: queue.length,
-        registerLogger
+        registerLogger,
+        remediationCount,
+        incrementRemediationCount
     }}>
       <HashRouter>
         <Routes>

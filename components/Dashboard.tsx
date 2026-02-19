@@ -22,7 +22,7 @@ import { TrafficContext } from '../App';
 
 export const Dashboard = () => {
   // Context
-  const { isAgentBusy, setBusy, triggerStrike, queueDepth, registerLogger } = useContext(TrafficContext);
+  const { isAgentBusy, setBusy, triggerStrike, queueDepth, registerLogger, remediationCount, incrementRemediationCount } = useContext(TrafficContext);
 
   // State
   const [history, setHistory] = useState<TelemetryPoint[]>([]);
@@ -40,7 +40,6 @@ export const Dashboard = () => {
   const [showFullArchive, setShowFullArchive] = useState(false);
   
   // Operational Intensity & Hiccup Logic State
-  const [shiftRemediationCount, setShiftRemediationCount] = useState<number>(0);
   const [isStalled, setIsStalled] = useState<boolean>(false);
 
   // Forensic Delay State
@@ -164,10 +163,7 @@ export const Dashboard = () => {
       if (newShift !== currentShift) {
         console.log(`[SYSTEM]: Shift Handover Triggered: ${currentShift} -> ${newShift}`);
         setCurrentShift(newShift);
-        // Reset Counter on Shift Change
-        setShiftRemediationCount(0);
         logsRef.current = [...logsRef.current, `[SYSTEM]: SHIFT_ROTATION_COMPLETE // NEW_WATCH: ${newShift}`];
-        logsRef.current = [...logsRef.current, `[SYSTEM]: NEW_WATCH_INITIALIZED // COUNTER_RESET`];
       }
     }, 60000); // Check every 60 seconds
 
@@ -230,6 +226,16 @@ export const Dashboard = () => {
       if (remediationTimer === 0) {
           // PHASE 1: FORENSIC HOLD EXPIRED -> ENTER FAILSAFE
           if (remediationPhase === 'HOLD') {
+              // FAIL-SAFE CONDITION: Only proceed if system is still compromised
+              // If system has spontaneously recovered (unlikely for Zombie, but possible for false positive), cancel.
+              if (systemStatus === SystemStatus.NOMINAL) {
+                  logsRef.current = [...logsRef.current, "[INFO]: SYSTEM_RECOVERED_DURING_HOLD. CANCELLING_FAILSAFE."];
+                  setRemediationTimer(null);
+                  setRemediationPhase('HOLD');
+                  isHealingInProgressRef.current = false;
+                  return;
+              }
+
               setRemediationPhase('FAILSAFE');
               setRemediationTimer(120); // 120s Grace Period (Total 300s)
               logsRef.current = [...logsRef.current, "[WARNING]: FORENSIC_WINDOW_CLOSED. OPERATOR_INACTIVITY_DETECTED. EXTENDING_GRACE_PERIOD_120S."];
@@ -260,7 +266,7 @@ export const Dashboard = () => {
           setRemediationTimer(t => (t !== null && t > 0 ? t - 1 : 0));
       }, 1000);
       return () => clearInterval(timer);
-  }, [remediationTimer, history, remediationPhase]);
+  }, [remediationTimer, history, remediationPhase, systemStatus]);
 
   // Debug AI Uplink Trigger
   const handleDebugUplink = async () => {
@@ -397,9 +403,10 @@ export const Dashboard = () => {
       const totalTtrSec = Math.floor(Math.max(0, totalTtrMs) / 1000);
       const latencySec = Math.floor(Math.max(0, humanLatencyMs) / 1000);
 
-      // Increment Shift Counter
-      const newCount = shiftRemediationCount + 1;
-      setShiftRemediationCount(newCount);
+      // Increment Global Counter
+      incrementRemediationCount();
+      // Use optimistic next value for logging
+      const newCount = remediationCount + 1;
 
       // Capture Stall State before reset
       const stallDetectedDuringEvent = isStalled;
@@ -560,7 +567,10 @@ export const Dashboard = () => {
     }
 
     // 3. START FORENSIC DELAY PROTOCOL (1st/2nd Shift)
-    // IMPORTANT: Timer scale set to 180s (3 minutes)
+    // HUMAN-FIRST PROTOCOL ENFORCEMENT
+    // Logic: If currentShift is 1 or 2, executeInstanceReset is locked behind 180s delay.
+    logsRef.current = [...logsRef.current, `[PROTOCOL]: HUMAN_FIRST_MANDATE_ACTIVE (${currentShiftRef.current}). INITIATING_FORENSIC_HOLD.`];
+    
     setRemediationPhase('HOLD');
     setRemediationTimer(180); 
     setCommandStatus(`[CMD]: INITIATING FORENSIC HOLD (180s)...`);
@@ -824,7 +834,7 @@ export const Dashboard = () => {
         status={systemStatus} 
         remediationTimer={remediationTimer}
         remediationPhase={remediationPhase}
-        shiftRemediationCount={shiftRemediationCount}
+        shiftRemediationCount={remediationCount}
         isStalled={isStalled}
     >
       <style>{`
