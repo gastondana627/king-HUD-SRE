@@ -7,7 +7,7 @@ import { TelemetryPoint, DiagnosticResult, SystemStatus } from '../types';
 import { analyzeSystemState } from '../services/geminiService';
 import { sendNtfyAlert, broadcastCriticalAlert, sendEmailAlert, broadcastFailSafeAlert } from '../services/notificationService';
 import { executeInstanceReset } from '../services/cloudService';
-import { startAuditScheduler, logAuditEntry, invoke_ai_analysis, getShiftReports, isAuditorOnline, checkAndSendDailySummary, getCurrentShift, downloadAuditLog, resetUplinkConnection } from '../services/auditService';
+import { startAuditScheduler, logAuditEntry, invoke_ai_analysis, getShiftReports, isAuditorOnline, checkAndSendDailySummary, getCurrentShift, downloadAuditLog, resetUplinkConnection, broadcastStrikeClear, getStrikeMetrics } from '../services/auditService';
 import { 
   SIMULATION_INTERVAL_MS, 
   MAX_HISTORY_POINTS, 
@@ -41,8 +41,15 @@ export const Dashboard = () => {
   const [currentShift, setCurrentShift] = useState<string>(getCurrentShift());
   const [showFullArchive, setShowFullArchive] = useState(false);
   
+  // Strike Stats
+  const [strikeMetrics, setStrikeMetrics] = useState({ total24h: 0, currentShiftCount: 0 });
+
   // Forensic Confidence Actuation State
   const [forensicConfidence, setForensicConfidence] = useState<number>(5);
+
+  // Forensic Persistence & Auto-Decay
+  const [forensicDecayTimer, setForensicDecayTimer] = useState<number | null>(null);
+  const [isForensicStale, setIsForensicStale] = useState(false);
 
   // Operational Intensity & Hiccup Logic State
   const [isStalled, setIsStalled] = useState<boolean>(false);
@@ -84,6 +91,33 @@ export const Dashboard = () => {
     });
   }, [registerLogger]);
 
+  // Forensic Decay Timer Logic
+  useEffect(() => {
+    if (forensicDecayTimer === null) return;
+
+    if (forensicDecayTimer === 0) {
+        // Expiration: Clear the box
+        setDiagnosticResult(null);
+        setForensicDecayTimer(null);
+        setIsForensicStale(false);
+        logsRef.current = [...logsRef.current, "[SYSTEM]: FORENSIC_CACHE_CLEARED. RESUMING_STANDARD_SCAN."];
+        return;
+    }
+
+    const interval = setInterval(() => {
+        setForensicDecayTimer(prev => (prev !== null && prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    
+    return () => clearInterval(interval);
+  }, [forensicDecayTimer]);
+
+  const startForensicDecay = useCallback(() => {
+      if (diagnosticResult) {
+          setForensicDecayTimer(60);
+          setIsForensicStale(true);
+      }
+  }, [diagnosticResult]);
+
   // Sync Busy State with Traffic Controller
   useEffect(() => {
     const busy = simulationMode !== 'NOMINAL' || isAnalyzing;
@@ -107,6 +141,12 @@ export const Dashboard = () => {
 
   const remediationTimerRef = useRef(remediationTimer);
   useEffect(() => { remediationTimerRef.current = remediationTimer; }, [remediationTimer]);
+
+  // Poll Strike Metrics on Remediation or Mount
+  useEffect(() => {
+      const metrics = getStrikeMetrics();
+      setStrikeMetrics(metrics);
+  }, [remediationCount]);
 
   // Forensic Confidence Actuation Logic
   useEffect(() => {
@@ -331,6 +371,10 @@ export const Dashboard = () => {
     setSimulationSource('RED_TEAM_MANUAL'); // Tag as manual red team
     setSystemStatus(SystemStatus.WARNING); // Warning, not Critical (it's a test)
     
+    // RAPID FIRE OVERRIDE: Kill any existing decay
+    setForensicDecayTimer(null);
+    setIsForensicStale(false);
+    
     // Inject Test Mode Logs immediately
     logsRef.current = [...logsRef.current.slice(-10), ...MOCK_LOGS_STRIKE];
 
@@ -460,6 +504,9 @@ export const Dashboard = () => {
       
       if (resetSuccess) {
           lastResetTimeRef.current = Date.now();
+          // SYNC: Clear Strike on Red Console
+          broadcastStrikeClear();
+          
           logsRef.current = [...logsRef.current, `[SYSTEM]: RECOVERY_COMPLETE. SOURCE: ${source}. TTR: ${totalTtrSec}s`];
           setCommandStatus(null);
           
@@ -468,11 +515,14 @@ export const Dashboard = () => {
           setSystemStatus(SystemStatus.NOMINAL);
           consecutiveZombieTicksRef.current = 0;
           isFractureActiveRef.current = false;
-          setDiagnosticResult(null);
+          // setDiagnosticResult(null); // REPLACED WITH DECAY
           
           // Reset Hiccup State
           setIsStalled(false);
           stallTickCountRef.current = 0;
+          
+          // Start Forensic Decay (Post-Mortem View)
+          startForensicDecay();
       } else {
           // If autonomous mode failed, we MUST enforce cooldown to prevent loops
           if (!isManual) {
@@ -729,6 +779,12 @@ export const Dashboard = () => {
       console.log("!!! C2 FRACTURE CONFIRMED !!!");
       isFractureActiveRef.current = true;
       
+      // RAPID FIRE OVERRIDE: Kill any existing decay immediately
+      if (isForensicStale) {
+          setForensicDecayTimer(null);
+          setIsForensicStale(false);
+      }
+
       // TTR START: CAPTURE DETECTION TIME
       if (remediationStartTimeRef.current === 0) {
           remediationStartTimeRef.current = now;
@@ -786,6 +842,8 @@ export const Dashboard = () => {
        isFractureActiveRef.current = false;
        setSystemStatus(SystemStatus.NOMINAL);
        setDiagnosticResult(null);
+       // Start Forensic Decay (Post-Mortem View)
+       startForensicDecay();
     }
 
     // AI Analysis Debounce
@@ -798,7 +856,7 @@ export const Dashboard = () => {
       triggerAnalysis(point);
     }
 
-  }, []);
+  }, [isForensicStale, startForensicDecay]);
 
   const triggerAnalysis = async (point: TelemetryPoint) => {
     setIsAnalyzing(true);
@@ -866,6 +924,8 @@ export const Dashboard = () => {
         remediationPhase={remediationPhase}
         shiftRemediationCount={remediationCount}
         isStalled={isStalled}
+        currentShift={currentShift}
+        strikeMetrics={strikeMetrics}
     >
       <style>{`
         @keyframes crtFlicker {
@@ -1250,7 +1310,13 @@ export const Dashboard = () => {
 
         {/* Right: AI Diagnostics */}
         <div className="col-span-12 lg:col-span-4 h-[500px] lg:h-auto">
-          <DiagnosticsPanel result={diagnosticResult} loading={isAnalyzing} confidence={forensicConfidence} />
+          <DiagnosticsPanel 
+            result={diagnosticResult} 
+            loading={isAnalyzing} 
+            confidence={forensicConfidence} 
+            isStale={isForensicStale}
+            decayTimer={forensicDecayTimer}
+          />
         </div>
       </div>
     </HUDLayout>

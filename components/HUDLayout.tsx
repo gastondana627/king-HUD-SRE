@@ -8,9 +8,11 @@ interface HUDLayoutProps {
   remediationPhase?: 'HOLD' | 'FAILSAFE';
   shiftRemediationCount?: number;
   isStalled?: boolean;
+  currentShift?: string;
+  strikeMetrics?: { total24h: number, currentShiftCount: number };
 }
 
-export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediationTimer, remediationPhase = 'HOLD', shiftRemediationCount = 0, isStalled = false }) => {
+export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediationTimer, remediationPhase = 'HOLD', shiftRemediationCount = 0, isStalled = false, currentShift = "1ST_SHIFT", strikeMetrics = { total24h: 0, currentShiftCount: 0 } }) => {
   const [nextWaveTimer, setNextWaveTimer] = useState("00:00:00");
 
   const isCritical = status === 'CRITICAL' || status === 'ZOMBIE_KERNEL';
@@ -92,6 +94,8 @@ export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediat
     return `${m}:${s}`;
   };
 
+  const isThirdShift = currentShift === '3RD_SHIFT';
+
   return (
     <div className={`min-h-screen bg-hud-black text-hud-text font-mono p-4 md:p-6 overflow-hidden relative`}>
       {/* Background Grid */}
@@ -135,8 +139,18 @@ export const HUDLayout: React.FC<HUDLayoutProps> = ({ children, status, remediat
             </span>
 
             {/* STRIKE COUNTER */}
-            <span className="text-hud-text hidden sm:inline-block">
-                [SHIFT_STRIKES_CLEARED: <span className="text-emerald-400 font-bold">{shiftRemediationCount}</span>]
+            <span className="text-hud-text hidden sm:flex flex-col items-end leading-none">
+                <span>
+                    {isThirdShift ? '[24H_CYCLE_TOTAL]:' : '[SHIFT_STRIKES_CLEARED]:'} 
+                    <span className="text-emerald-400 font-bold ml-1">
+                        {isThirdShift ? strikeMetrics.total24h : strikeMetrics.currentShiftCount}
+                    </span>
+                </span>
+                {isThirdShift && (
+                    <span className="text-[9px] text-gray-500 mt-0.5">
+                        (3RD_SHIFT_ACTIVE: {strikeMetrics.currentShiftCount})
+                    </span>
+                )}
             </span>
             
             {/* Uplink Status LED (Persistent Indicator) */}

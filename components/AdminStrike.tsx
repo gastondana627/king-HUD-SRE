@@ -36,6 +36,19 @@ export const AdminStrike = () => {
       }
   }, [isAgentBusy]);
 
+  // Listen for Global Clear Event (Cross-Console Sync)
+  useEffect(() => {
+    const channel = new BroadcastChannel('king_hud_c2_channel');
+    channel.onmessage = (event) => {
+      if (event.data.type === 'STRIKE_CLEARED_GLOBAL') {
+         setIsStriking(false);
+         setTimer(null); // Clear timer immediately
+         addLog("[SYSTEM]: REMEDIATION CONFIRMED BY SENTINEL FAIL-SAFE.");
+      }
+    };
+    return () => channel.close();
+  }, []);
+
   // Countdown Interval
   useEffect(() => {
       if (timer === null) return;

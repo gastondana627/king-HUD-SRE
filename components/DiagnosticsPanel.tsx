@@ -6,9 +6,11 @@ interface DiagnosticsPanelProps {
   result: DiagnosticResult | null;
   loading: boolean;
   confidence?: number;
+  isStale?: boolean;
+  decayTimer?: number | null;
 }
 
-export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ result, loading, confidence = 5 }) => {
+export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ result, loading, confidence = 5, isStale = false, decayTimer = null }) => {
   // Confidence is now managed by parent Dashboard to support Snapshot Actuation logic
 
   if (loading) {
@@ -25,7 +27,7 @@ export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ result, load
     return (
       <div className="hud-border h-full flex flex-col items-center justify-center p-8 text-hud-muted opacity-50">
         <CheckCircle className="w-12 h-12 mb-4" />
-        <h2 className="text-xl font-display uppercase tracking-widest">System Nominal</h2>
+        <h2 className="text-xl font-display uppercase tracking-widest">SCANNING... NO ACTIVE THREATS</h2>
         <p className="text-xs mt-2">Awaiting Telemetry Anomalies</p>
       </div>
     );
@@ -57,9 +59,18 @@ export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ result, load
   }
 
   return (
-    <div className={`hud-border h-full flex flex-col ${isCritical ? 'hud-border-critical' : ''}`}>
+    <div className={`hud-border h-full flex flex-col ${isCritical ? 'hud-border-critical' : ''} relative overflow-hidden`}>
+      
+      {/* STALE WATERMARK */}
+      {isStale && (
+        <div className="absolute top-0 right-0 p-2 px-3 bg-black/90 border-l border-b border-gray-700 text-[10px] font-mono z-20 flex flex-col items-end shadow-lg">
+            <span className="text-gray-500 font-bold tracking-widest">STALE_DATA // POST_MORTEM</span>
+            <span className="text-hud-primary animate-pulse">CACHE_CLEAR_IN: {decayTimer}s</span>
+        </div>
+      )}
+
       {/* Header */}
-      <div className="p-4 border-b border-gray-800 bg-gray-900/50 flex justify-between items-center">
+      <div className={`p-4 border-b border-gray-800 bg-gray-900/50 flex justify-between items-center ${isStale ? 'opacity-50 grayscale' : ''}`}>
         <div className="flex items-center gap-2">
           <Icon className={`w-5 h-5 ${statusColor} ${isFracture || isUplinkFail || isAdversary ? 'animate-pulse' : ''}`} />
           <span className={`font-bold font-display uppercase tracking-wider ${statusColor}`}>
@@ -72,7 +83,7 @@ export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ result, load
       </div>
 
       {/* Analysis Content */}
-      <div className="flex-1 p-4 overflow-y-auto">
+      <div className={`flex-1 p-4 overflow-y-auto ${isStale ? 'opacity-75' : ''}`}>
         <div className="mb-6">
           <h4 className="text-xs text-hud-muted uppercase tracking-widest mb-2">Forensic Analysis</h4>
           <p className="text-sm leading-relaxed text-gray-300 font-mono border-l-2 border-gray-700 pl-3">

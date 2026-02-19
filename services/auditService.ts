@@ -615,6 +615,13 @@ export const triggerZombieStrike = (delaySec: number, source: string) => {
   channel.close();
 };
 
+export const broadcastStrikeClear = () => {
+  console.log("[AUDIT_SERVICE]: Broadcasting Global Strike Clear Signal...");
+  const channel = new BroadcastChannel('king_hud_c2_channel');
+  channel.postMessage({ type: 'STRIKE_CLEARED_GLOBAL' });
+  channel.close();
+};
+
 export const triggerRemediationWebhook = (instance: string, token: string, source: string, metrics: any, geminiMatch: boolean) => {
     // Log the OOB remediation event
     const safeMetrics: TelemetryPoint = {
@@ -642,4 +649,37 @@ export const triggerRemediationWebhook = (instance: string, token: string, sourc
         10, // humanLatency
         0 // aiConfidence (unknown for webhook)
     );
+};
+
+export const getStrikeMetrics = () => {
+  const csv = localStorage.getItem(STORAGE_KEY);
+  if (!csv) return { total24h: 0, currentShiftCount: 0 };
+
+  const lines = csv.trim().split('\n').slice(1);
+  const now = Date.now();
+  const oneDay = 24 * 60 * 60 * 1000;
+  
+  const currentShiftLabel = getCurrentShift();
+  const currentShiftId = currentShiftLabel === "1ST_SHIFT" ? 1 : currentShiftLabel === "2ND_SHIFT" ? 2 : 3;
+
+  let total24h = 0;
+  let currentShiftCount = 0;
+
+  lines.forEach(line => {
+    const parts = line.split(',');
+    // Basic validation
+    if (parts.length < 10) return;
+
+    const timestamp = parseInt(parts[2]);
+    const shiftId = parseInt(parts[9]);
+
+    if (!isNaN(timestamp) && (now - timestamp <= oneDay)) {
+        total24h++;
+        if (shiftId === currentShiftId) {
+            currentShiftCount++;
+        }
+    }
+  });
+
+  return { total24h, currentShiftCount };
 };
