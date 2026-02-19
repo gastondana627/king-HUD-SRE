@@ -3,6 +3,7 @@ import { HUDLayout } from './HUDLayout';
 import { TelemetryPanel } from './TelemetryPanel';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
 import { AdversaryRadar } from './AdversaryRadar';
+import { SimControls } from './SimControls';
 import { TelemetryPoint, DiagnosticResult, SystemStatus } from '../types';
 import { analyzeSystemState } from '../services/geminiService';
 import { sendNtfyAlert, broadcastCriticalAlert, sendEmailAlert, broadcastFailSafeAlert } from '../services/notificationService';
@@ -19,7 +20,7 @@ import {
   INITIAL_HOLD_TIME,
   FAILSAFE_GRACE_TIME
 } from '../constants';
-import { Play, Pause, AlertOctagon, RotateCcw, Zap, RefreshCw, ServerCrash, FileText, X, Cpu, Download, Database, Layers, ArrowLeft, ChevronDown } from 'lucide-react';
+import { RefreshCw, FileText, X, Cpu, Download, Database, Layers, ArrowLeft, ChevronDown } from 'lucide-react';
 import { TrafficContext } from '../App';
 
 export const Dashboard = () => {
@@ -482,6 +483,13 @@ export const Dashboard = () => {
     } catch (error: any) {
       logsRef.current = [...logsRef.current, `[ERROR] Actuation Link Severed: ${error.message}`];
     }
+  };
+
+  // Wrapper for passing to SimControls
+  const handleRemediation = () => {
+    const cmd = diagnosticResult?.interventions?.[0]?.cliCommand || "gcloud compute instances reset --all";
+    triggerGitLabActuation(cmd);
+    initiateSelfHealing(history[history.length-1], true);
   };
 
   // Final Execution of Remediation (Post-Delay or Manual)
@@ -1191,106 +1199,20 @@ export const Dashboard = () => {
         {/* Left Column: Controls & Stats */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-4">
           
-          {/* Control Panel */}
-          <div className="hud-border p-4">
-            <h3 className="text-xs text-hud-muted uppercase tracking-widest mb-4">Sim Controls</h3>
-            <div className="flex flex-col gap-3">
-              <button 
-                onClick={() => setIsPlaying(!isPlaying)}
-                className={`flex items-center justify-center gap-2 p-3 rounded font-bold transition-all ${isPlaying ? 'bg-hud-dark border border-hud-muted text-hud-text' : 'bg-hud-primary text-black'}`}
-              >
-                {isPlaying ? <Pause size={16} /> : <Play size={16} />}
-                {isPlaying ? 'PAUSE TELEMETRY' : 'RESUME STREAM'}
-              </button>
-
-              <button 
-                onClick={toggleSimulation}
-                disabled={simulationMode === 'CPU_STRIKE'}
-                className={`flex items-center justify-center gap-2 p-3 rounded font-bold transition-all ${
-                  simulationMode === 'ZOMBIE' 
-                  ? 'bg-red-900/50 border border-red-500 text-red-100 animate-pulse' 
-                  : 'bg-hud-dark border border-hud-muted text-hud-text hover:border-hud-primary disabled:opacity-50 disabled:cursor-not-allowed'
-                }`}
-              >
-                {simulationMode === 'ZOMBIE' ? <RotateCcw size={16} /> : <AlertOctagon size={16} />}
-                {simulationMode === 'ZOMBIE' ? 'RESET SIMULATION' : 'INJECT ZOMBIE KERNEL'}
-              </button>
-
-              <button 
-                onClick={() => triggerPlannedStrike(30)}
-                disabled={simulationMode === 'CPU_STRIKE'}
-                className={`flex items-center justify-center gap-2 p-3 rounded font-bold transition-all relative overflow-hidden group ${
-                  simulationMode === 'CPU_STRIKE'
-                  ? 'bg-amber-600 text-black cursor-not-allowed'
-                  : 'bg-hud-dark border border-amber-500/50 text-amber-500 hover:bg-amber-500/10'
-                }`}
-              >
-                <Zap size={16} className={simulationMode === 'CPU_STRIKE' ? 'animate-bounce' : ''} />
-                <span className="text-xs">{simulationMode === 'CPU_STRIKE' ? 'STRIKE IN PROGRESS...' : 'INITIATE ADVERSARY EMULATION'}</span>
-                {simulationMode !== 'CPU_STRIKE' && <div className="absolute bottom-0 left-0 w-full h-1 bg-amber-500 transform scale-x-0 group-hover:scale-x-100 transition-transform origin-left"></div>}
-              </button>
-
-              {/* Force Cloud Reset Button */}
-              <button 
-                ref={remediationButtonRef}
-                onClick={() => {
-                  const cmd = diagnosticResult?.interventions?.[0]?.cliCommand || "gcloud compute instances reset --all";
-                  triggerGitLabActuation(cmd);
-                  initiateSelfHealing(history[history.length-1], true);
-                }}
-                disabled={isAutonomousActuating}
-                className={`flex items-center justify-center gap-2 p-3 rounded font-bold transition-all border ${
-                  isAutonomousActuating 
-                    ? 'sentinel-btn-active cursor-wait'
-                    : remediationTimer !== null
-                        ? 'bg-red-900 border-red-500 text-red-100 animate-pulse'
-                        : 'bg-hud-dark border-red-700 text-red-500 hover:bg-red-900/20'
-                }`}
-              >
-                {isAutonomousActuating ? <RefreshCw size={16} className="animate-spin" /> : <ServerCrash size={16} />}
-                <span className="text-xs">
-                   {isAutonomousActuating ? `[[SHIFT_${currentShift}_ACTUATING...]]` : `[COMMIT_REMEDIATION_TO_${currentShift}]`}
-                </span>
-              </button>
-
-              {/* Manual Resync Button - Only appears on Failure */}
-              {(systemStatus === SystemStatus.UPLINK_FAILURE || systemStatus === SystemStatus.UPLINK_RECONNECTING) && (
-                  <button 
-                    onClick={attemptManualResync}
-                    disabled={systemStatus === SystemStatus.UPLINK_RECONNECTING}
-                    className={`flex items-center justify-center gap-2 p-3 rounded font-bold transition-all border ${
-                        systemStatus === SystemStatus.UPLINK_RECONNECTING
-                        ? 'bg-orange-900/50 border-orange-500 text-orange-200 cursor-wait'
-                        : 'bg-hud-dark border-orange-500 text-orange-500 hover:bg-orange-500/10'
-                    }`}
-                  >
-                    <RefreshCw size={16} className={systemStatus === SystemStatus.UPLINK_RECONNECTING ? 'animate-spin' : ''} />
-                    <span className="text-xs">{systemStatus === SystemStatus.UPLINK_RECONNECTING ? 'SYNCING...' : 'MANUAL UPLINK RESYNC'}</span>
-                  </button>
-              )}
-
-              {/* VIEW SHIFT LOGS BUTTON */}
-              <button 
-                onClick={() => setShowShiftReports(true)}
-                className="flex items-center justify-center gap-2 p-2 rounded font-bold transition-all bg-gray-900 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 mt-2"
-              >
-                <FileText size={16} />
-                <span className="text-xs">VIEW {currentShift} REPORTS</span>
-              </button>
-
-            </div>
-            
-            <div className="mt-4 pt-4 border-t border-gray-800">
-               <div className="text-xs font-mono text-gray-500 mb-1">CURRENT PATTERN</div>
-               <div className={`text-lg font-display font-bold ${
-                 simulationMode === 'ZOMBIE' ? 'text-red-500' : 
-                 simulationMode === 'CPU_STRIKE' ? 'text-amber-500' : 'text-emerald-500'
-               }`}>
-                 {simulationMode === 'ZOMBIE' ? 'TYPE 1 SD (ZOMBIE)' : 
-                  simulationMode === 'CPU_STRIKE' ? 'RED TEAM STRIKE' : 'NOMINAL OPERATION'}
-               </div>
-            </div>
-          </div>
+          <SimControls 
+            isPlaying={isPlaying}
+            setIsPlaying={setIsPlaying}
+            simulationMode={simulationMode}
+            toggleSimulation={toggleSimulation}
+            triggerPlannedStrike={triggerPlannedStrike}
+            isAutonomousActuating={isAutonomousActuating}
+            remediationTimer={remediationTimer}
+            handleRemediation={handleRemediation}
+            systemStatus={systemStatus}
+            attemptManualResync={attemptManualResync}
+            setShowShiftReports={setShowShiftReports}
+            currentShift={currentShift}
+          />
 
           {/* Quick Stats */}
           <div className="hud-border p-4 flex-1">

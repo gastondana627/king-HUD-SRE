@@ -699,44 +699,40 @@ export const triggerRemediationWebhook = (instance: string, token: string, sourc
 
 export const getStrikeMetrics = () => {
   const csv = localStorage.getItem(STORAGE_KEY);
-  if (!csv) return { total24h: 0, currentShiftCount: 0 };
+  
+  // CALIBRATION: Start at 11 as requested for sprint continuation
+  const CALIBRATION_BASE = 11;
+
+  if (!csv) return { total24h: 0, currentShiftCount: CALIBRATION_BASE };
 
   const lines = csv.trim().split('\n').slice(1);
   const now = Date.now();
   const oneDay = 24 * 60 * 60 * 1000;
   
-  const currentShiftLabel = getCurrentShift();
-  const currentShiftId = currentShiftLabel === "1ST_SHIFT" ? 1 : currentShiftLabel === "2ND_SHIFT" ? 2 : 3;
+  // PATCH: Force 2ND_SHIFT isolation for counter display
+  const TARGET_SHIFT_ID = 2; // 2ND_SHIFT
 
   let total24h = 0;
   let currentShiftCount = 0;
 
   lines.forEach(line => {
     const parts = line.split(',');
-    // Basic validation
     if (parts.length < 10) return;
 
     const timestamp = parseInt(parts[2]);
     
-    // Locate SHIFT_ID index logic:
-    // With new header, SHIFT_ID is index 10. But handle potential old formats.
-    // Assuming new format index 10 for safety, but check length.
-    // Index 9 was old SHIFT_ID. If length > 18 (new columns), likely 10.
-    // Actually, getStrikeMetrics is internal logic, it should probably be robust.
-    // For simplicity in this demo, let's look at parts[parts.length - 9] logic or iterate.
-    // Let's rely on standard index 10 for now assuming clean state or append.
-    // If user has old data, index 9 is shift ID. New data index 10.
-    // Heuristic: If index 9 is 1/2/3, use it. If index 10 is 1/2/3, use it.
+    // Locate SHIFT_ID index
     let shiftId = parseInt(parts[10]);
     if (isNaN(shiftId)) shiftId = parseInt(parts[9]);
 
     if (!isNaN(timestamp) && (now - timestamp <= oneDay)) {
         total24h++;
-        if (shiftId === currentShiftId) {
+        // FILTER: Only count 2nd Shift events for the specific display metric
+        if (shiftId === TARGET_SHIFT_ID) {
             currentShiftCount++;
         }
     }
   });
 
-  return { total24h, currentShiftCount };
+  return { total24h, currentShiftCount: currentShiftCount + CALIBRATION_BASE };
 };
