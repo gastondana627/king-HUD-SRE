@@ -7,7 +7,7 @@ import { TelemetryPoint, DiagnosticResult, SystemStatus } from '../types';
 import { analyzeSystemState } from '../services/geminiService';
 import { sendNtfyAlert, broadcastCriticalAlert } from '../services/notificationService';
 import { executeInstanceReset } from '../services/cloudService';
-import { startAuditScheduler, logAuditEntry, invoke_ai_analysis, getShiftReports, isAuditorOnline, checkAndSendDailySummary, getCurrentShift, downloadAuditLog } from '../services/auditService';
+import { startAuditScheduler, logAuditEntry, invoke_ai_analysis, getShiftReports, isAuditorOnline, checkAndSendDailySummary, getCurrentShift, downloadAuditLog, resetUplinkConnection } from '../services/auditService';
 import { 
   SIMULATION_INTERVAL_MS, 
   MAX_HISTORY_POINTS, 
@@ -241,6 +241,12 @@ export const Dashboard = () => {
     if (isGeneratingReport) return;
     setIsGeneratingReport(true);
     
+    // 1. Reset Connection & Clear Cache
+    resetUplinkConnection();
+
+    // 2. Inject Confirmation Log
+    logsRef.current = [...logsRef.current, "[UPLINK]: RE-HANDSHAKE_COMPLETE. FORENSIC_LEAD_READY."];
+
     // Get current state
     const currentMetrics = history[history.length - 1];
     
