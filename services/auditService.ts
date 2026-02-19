@@ -699,9 +699,8 @@ export const triggerRemediationWebhook = (instance: string, token: string, sourc
 
 export const getStrikeMetrics = () => {
   const csv = localStorage.getItem(STORAGE_KEY);
-  
-  // CALIBRATION: Start at 11 as requested for sprint continuation
   const CALIBRATION_BASE = 11;
+  const TARGET_SHIFT_ID = 2; // 2ND_SHIFT
 
   if (!csv) return { total24h: 0, currentShiftCount: CALIBRATION_BASE };
 
@@ -709,25 +708,24 @@ export const getStrikeMetrics = () => {
   const now = Date.now();
   const oneDay = 24 * 60 * 60 * 1000;
   
-  // PATCH: Force 2ND_SHIFT isolation for counter display
-  const TARGET_SHIFT_ID = 2; // 2ND_SHIFT
-
   let total24h = 0;
   let currentShiftCount = 0;
 
   lines.forEach(line => {
     const parts = line.split(',');
+    // CSV_HEADER length check or robust parsing
     if (parts.length < 10) return;
 
     const timestamp = parseInt(parts[2]);
-    
-    // Locate SHIFT_ID index
     let shiftId = parseInt(parts[10]);
     if (isNaN(shiftId)) shiftId = parseInt(parts[9]);
-
+    
+    // Strict 24h window
     if (!isNaN(timestamp) && (now - timestamp <= oneDay)) {
         total24h++;
-        // FILTER: Only count 2nd Shift events for the specific display metric
+        
+        // STRICT FILTER: Only count explicitly 2nd Shift events
+        // This effectively "purges" ambiguous or 1st shift data from the specific counter
         if (shiftId === TARGET_SHIFT_ID) {
             currentShiftCount++;
         }
